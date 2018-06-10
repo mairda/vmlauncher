@@ -18,8 +18,8 @@ vmlauncher configuration files are expected to be found in a sub-directory named
 name=Simple PC
 cpus=1
 mem=1024
-hda=~/mySimplePCdisk.qcow2
-cdrom=~/myLinuxRescueCD.iso
+hda=/home/user/mySimplePCdisk.qcow2
+cdrom=/home/user/myLinuxRescueCD.iso
 
 Assuming the file is in the user's .vmlauncher directory and named SimplePC plus the vmlauncher.pl script is executable and in the user's path then the Simple PC can be started as a qemu VM using the command-line:
 
