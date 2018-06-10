@@ -7,6 +7,22 @@ vmlauncher will also generate pre-amble command-lines for situations like host n
 
 The initial version contains many assumptions about the host environent on which it is used since it is based on just enough to be usable on the author's linux workstation. However, it isn't difficult to modify as-needed. Even though it was created to launch x86/x86_64 qemu/kvm virtual machines on a linux host there is nothing to prevent it being modified to target or be hosted on other CPU architectures or other system emulator applications and hypervisors.
 
-The most functional piece in the initial version is the vmlauncher.pl perl script that allows the creation of configuration files and qemu command-lines on linux assuming the user has a .qemu directory to contain the configuration files. It also assumes the linux user has enough sudo configuration (or is the root user) to create, set up, set down, add and remove from bridges tap interfaces with a limited name format.
+The most functional piece in the initial version is the vmlauncher.pl perl script that allows the creation of configuration files and qemu command-lines on linux assuming the user has a .vmlauncher directory to contain the configuration files. It also assumes the linux user has enough sudo configuration (or the root user is operating) to create, set up, set down, add and remove from bridges tap interfaces with a limited name format.
 
 There is also a recently started python/python-qt UI aimed at providing the same functionality as vmlauncher.pl via a Qt UI.
+
+USAGE
+
+vmlauncher configuration files are expected to be found in a sub-directory named .vmlauncher in the user's home directory. Each file has a name that is a means of identifying the VM to the user, e.g. Linux4 and contain simple lines of ITEM=VALUE for each setting that the VM is to have. The majority of supported options have styles that match qemu command-line features but some cases simplify qemu command-line options without losing functionality. For example, a simple VM with a single CPU, 1GB of memory, an IDE HDD and an IDE CD-ROM might have a config file containing:
+
+name=Simple PC
+cpus=1
+mem=1024
+hda=~/mySimplePCdisk.qcow2
+cdrom=~/myLinuxRescueCD.iso
+
+Assuming the file is in the user's .vmlauncher directory and named SimplePC plus the vmlauncher.pl script is executable and in the user's path then the Simple PC can be started as a qemu VM using the command-line:
+
+vmlauncher.pl vm=SimplepPC
+
+The qemu runtime window will have in the title: "Simple PC"

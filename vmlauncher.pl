@@ -537,7 +537,7 @@ sub getConfigDir
 	my $cfgdir;
 
 	# Extract the generic base directory for VM configs from the environment
-	$cfgdir = $ENV{HOME}."/.qemu/";
+	$cfgdir = $ENV{HOME}."/.vmlauncher/";
 	print __LINE__, ": ", (caller(0))[3], " finds $cfgdir\n" if ($debug);
 
 	return $cfgdir;
@@ -598,7 +598,7 @@ sub createNewVM
 	print "Creating a new Virtual Machine\n" if ($verbose);
 
 	# Set the config directory and config filename
-	$vmcfgdir = getConfigDir();	#$ENV{HOME}."/.qemu/";
+	$vmcfgdir = getConfigDir();	#$ENV{HOME}."/.vmlauncher/";
 	$vmcfgfile = getConfigFileName();	#$vmcfgdir.$vmname;
 
 	# Try to open the constructed path
@@ -1222,7 +1222,7 @@ sub createNewVM
 sub editVMConfig
 {
 	# Set the config directory and config filename
-	$vmcfgdir = getConfigDir();	#$ENV{HOME}."/.qemu/";
+	$vmcfgdir = getConfigDir();	#$ENV{HOME}."/.vmlauncher/";
 	$vmcfgfile = getConfigFileName();	#$vmcfgdir.$vmname;
 
 	(-e $vmcfgfile) or die("No such VM\n");
@@ -2290,7 +2290,7 @@ sub listVMs
 
 	# List the files in the generic base directory for VM configs
 	$vmdir = getConfigDir();
-	#$ENV{HOME}."/.qemu/";
+	#$ENV{HOME}."/.vmlauncher/";
 	opendir(DIR, $vmdir);
 	@vms = readdir(DIR);
 	closedir(DIR);
@@ -2564,7 +2564,7 @@ if (!$createVM)
         print __LINE__, ": Config filename is not fully qualified, trying with config dir\n" if ($debug);
 		# Extract the generic base directory for VM configs from the environment
 		$vmcfgdir = getConfigDir();
-		#$ENV{HOME}."/.qemu/";
+		#$ENV{HOME}."/.vmlauncher/";
 	
 		# Add the config name
 		$vmcfgfile = $vmcfgdir.$vmname;
