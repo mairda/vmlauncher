@@ -16,9 +16,13 @@ USAGE
 vmlauncher configuration files are expected to be found in a sub-directory named .vmlauncher in the user's home directory. Each file has a name that is a means of identifying the VM to the user, e.g. Linux4 and contain simple lines of ITEM=VALUE for each setting that the VM is to have. The majority of supported options have styles that match qemu command-line features but some cases simplify qemu command-line options without losing functionality. For example, a simple VM with a single CPU, 1GB of memory, an IDE HDD and an IDE CD-ROM might have a config file containing:
 
 name=Simple PC
+
 cpus=1
+
 mem=1024
+
 hda=/home/user/mySimplePCdisk.qcow2
+
 cdrom=/home/user/myLinuxRescueCD.iso
 
 Assuming the file is in the user's .vmlauncher directory and named SimplePC plus the vmlauncher.pl script is executable and in the user's path then the Simple PC can be started as a qemu VM using the command-line:
