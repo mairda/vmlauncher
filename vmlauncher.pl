@@ -1,6 +1,9 @@
 #!/usr/bin/perl
 #
 # Following version numbers precede the use of git but illustrate modifications
+# v0.4.9 - David Mair - Re-modeled FDD/HDD and startdate file usage to share code
+# v0.4.8 - David Mair - Fixed nic=<model> to allow model selection for netdev devices
+# v0.4.7 - David Mair - Added "nonet" option to disable guest networking
 # v0.4.6 - David Mair - Added qemu 2.10.1 enhancements, netdev/device for networks
 #                       Use ip rather than ifconfig
 # v0.4.5 - David Mair - Added vdrive disk as a means of accessing virtio disks devices
@@ -22,7 +25,7 @@ use Getopt::Long qw(GetOptionsFromString);
 
 my $us;
 
-my $ver = "0.4.6";
+my $ver = "0.4.9";
 
 my @sudobinlist = ("brctl", "ifconfig", "ip", "sudo", "tunctl");
 my %sudobins;
@@ -59,6 +62,13 @@ my $cdrom;
 my @chardevs;
 my $cpu = "";
 my $cpus = 1;
+my @validCPUs = ("Opteron_G5", "Opteron_G4", "Opteron_G3", "Opteron_G2",
+                    "Opteron_G1", "SandyBridge", "Nehalem", "Penryn", "Conroe",
+                    "n270", "athlon", "pentium3", "pentium2", "pentium", "486",
+                    "coreduo", "kvm32", "qemu32", "kvm64", "qemu64",
+                    "core2duo", "phenom", "base", "host", "max");
+
+
 my $curses;
 my $daemonize;
 my $dump;
@@ -88,7 +98,7 @@ my $mon;
 my $nostart;
 my $pidfile;
 my $rip = 0;
-my $sdl = 1;
+my $sdl = 0;
 my $snapshot;
 my $usb = 1;
 my $usbkbd = 1;
@@ -116,6 +126,7 @@ my $vmdir = "";
 my $cmdline = "";
 my $machine;
 my $net;
+my $nonet = 0;
 my $options = "";
 my $serial;
 my $soundhw;
@@ -127,7 +138,6 @@ my $startdatefile;
 my $starttime;
 my $dt;
 my $sdt;
-my $sdfile;
 my $vmelapsed;
 my $sy = "0";
 my $sm = "0";
@@ -136,10 +146,17 @@ my $shr = "0";
 my $smn = "0";
 my $ssc = "0";
 my %drives;
+
+my %basicDrives;
+my @fddKeys = ("fda", "fdb");
+my @hddKeys = ("hda", "hdb", "hdc", "hdd");
+my @opsForBasicDrives = ("dump", "write", "genCmd");
+
 my %nics;
 my %macs;
 my %vlans;
 my %netdevs;
+my %netids;
 my %bridges;
 my @taps;
 my @usbdevices;
@@ -156,6 +173,63 @@ my @ouis = ("AC:DE:48", "00:00:6C", "00:01:01", "00:05:4F", "00:05:78",
 my $mcastoui = "11:00:AA";
 
 
+sub vbTrace
+{
+    my $lnNum;
+    my $pCaller;
+    my $msg;
+
+    return if (!$verbose);
+
+    # We need a line number, the caller's caller and a message
+    if (defined($_[0]) && defined($_[1]) && defined($_[2]))
+    {
+        $lnNum = $_[0];
+        $pCaller = $_[1];
+        $msg = $_[2];
+
+        print "$lnNum".": $pCaller $msg\n";
+    }
+}
+
+
+sub dbTrace
+{
+    my $lnNum;
+    my $pCaller;
+    my $msg;
+
+    return if (!$debug);
+
+    # We need a line number, the caller's caller and a message
+    if (defined($_[0]) && defined($_[1]) && defined($_[2]))
+    {
+        $lnNum = $_[0];
+        $pCaller = $_[1];
+        $msg = $_[2];
+
+        print "$lnNum".": $pCaller $msg\n";
+    }
+}
+
+
+sub vbMessage
+{
+    my $msg;
+
+    return if (!$verbose);
+
+    # We need a message
+    if (defined($_[0]))
+    {
+        $msg = $_[0];
+
+        print "$msg\n";
+    }
+}
+
+
+# Find the paths to the executables for the external programs to be used
 sub findBinaries
 {
 	my $cmdz;
@@ -165,40 +239,45 @@ sub findBinaries
 	{
         if ($_ ne "ifconfig")
         {
-            print __LINE__, ": ", (caller(0))[3], " Finding path for $_\n" if ($verbose);
+            vbTrace(__LINE__, (caller(0))[3], " Finding path for $_");
             
+            # Make a temporary copy of the bin name
+            $binpath = $_;
+
             # Special handling for ip, which has a /bin/ and a /sbin/ instance
-            if ($_ eq "ip")
+            if ($binpath eq "ip")
             {
-                $cmdz = "sudo which /sbin/ip 2>/dev/null";
-            }
-            else
-            {
-                $cmdz = "sudo which $_ 2>/dev/null";
+                $binpath = "/sbin/ip";
             }
             
+            # Command line to see if an executable exists
+            $cmdz = "sudo which $binpath 2>/dev/null";
+
+            # Execute it and keep the stdio from it
             $binpath = qx/$cmdz/;
-            print " - qx completes with $binpath\n" if ($verbose);
+            vbMessage(" - qx completes with $binpath");
             
+            # If there was output to stdio
             if ($binpath =~ m/(.*)/)
             {
+                # It's the fully qualified path to the executable, use it
                 $binpath = $1;
-                print " - modified to $binpath\n" if ($verbose);
+                vbMessage(" - modified to $binpath");
             }
+            # If we have anything for the path to the executable
             if ($binpath ne "")
             {
+                # Use it as the executable for this binary name
                 $sudobins{$_} = $binpath;
-                print " - saved in sudobins hash as $sudobins{$_} with key $_\n" if ($verbose);
+                vbMessage(" - saved in sudobins hash as $sudobins{$_} with key $_");
             }
+            # If which gave us nothing, use globally assumed fully
+            # qualified paths
             else
             {
                 if ($_ =~ m/"brctl"/)
                 {
                     $binpath = $brctlbin;
-                }
-                elsif ($_ =~ m/"ifconfig"/)
-                {
-                    $binpath = $ifconfigbin;
                 }
                 elsif ($_ =~ m/"ip"/)
                 {
@@ -212,37 +291,482 @@ sub findBinaries
                 {
                     $binpath = $tunctlbin;
                 }
+                # Can this case ever occur, see if ($_ ne "ifconfig") above?
+                elsif ($_ =~ m/"ifconfig"/)
+                {
+                    $binpath = $ifconfigbin;
+                }
                 else
                 {
                     die("Failed to find $_ executable required for operation\n");
                 }
 
                 $sudobins{$_} = $binpath;
-                print " - saved constant $binpath in sudobins hash as $sudobins{$_} with key $_\n" if ($verbose);
+                vbMessage(" - saved constant $binpath in sudobins hash as $sudobins{$_} with key $_");
             }
         }
 	}
 }
 
 
+# Get the netdev NIC number from a netdev=<n> string
+# -1 is error
+sub getNetdevNICnumber
+{
+    my $netdev;
+    my $n;
+
+    vbTrace(__LINE__, (caller(0))[3], " Getting netdev NIC number");
+
+    if (defined($_[0]))
+    {
+        $netdev = $_[0];
+        vbTrace(__LINE__, (caller(0))[3], " * from $netdev");
+        if ($_ =~ /netdev=(\d)/i)
+        {
+            $n = $1;
+        }
+        else
+        {
+            $n = -1;
+        }
+    }
+    else
+    {
+        $n = -1;
+    }
+
+    vbTrace(__LINE__, (caller(0))[3], " * Result is: $n");
+    return $n;
+}
+
+
+# Given a NIC number, return a netdev=<n> string
+# Return empty string on error
+sub getNetdevFromNICnum
+{
+    my $netdev = "";
+    my $n;
+
+    vbTrace(__LINE__, (caller(0))[3], " Getting netdev from NIC number");
+
+    if (defined($_[0]))
+    {
+        if ($_[0] =~ /(\d+)/)
+        {
+            vbTrace(__LINE__, (caller(0))[3], " * from $1");
+            $n = 0 + $1;
+            if ($n >= 0)
+            {
+                $netdev = "netdev=$1";
+            }
+        }
+    }
+
+    vbTrace(__LINE__, (caller(0))[3], " * Result is: $netdev");
+    return $netdev;
+}
+
+# Get a netdev list item value for the netdev=<n> key in the first argument
+# Return empty string on error
+sub getNetdev
+{
+    my $ndkey;
+    my $netdev;
+
+    vbTrace(__LINE__, (caller(0))[3], " Get netdevs list item from key");
+
+    if (defined($_[0]))
+    {
+        $ndkey = $_[0];
+        vbTrace(__LINE__, (caller(0))[3], " * key is: $ndkey");
+        $netdev = $netdevs{$ndkey};
+        if (!defined($netdev))
+        {
+            vbTrace(__LINE__, (caller(0))[3], " * Nothing found in netdevs");
+            $netdev = "";
+        }
+    }
+
+    vbTrace(__LINE__, (caller(0))[3], " * Returning $netdev");
+    return $netdev;
+}
+
+
+# Set a netdev list item value for the netdev=<n> key in the first argument
+# to the value in the second argument
+sub setNetdev
+{
+    my $ndkey;
+    my $netdev;
+
+    vbTrace(__LINE__, (caller(0))[3], " Set netdevs list item from key and value");
+
+    if (defined($_[0]) && defined($_[1]))
+    {
+        $ndkey = $_[0];
+        vbTrace(__LINE__, (caller(0))[3], " * key is:   $ndkey");
+        $netdev = $_[1];
+        vbTrace(__LINE__, (caller(0))[3], " * Value is: $netdev");
+        $netdevs{$ndkey} = $netdev;
+    }
+}
+
+
+# Get a macs list item value for the key in the first argument
+# Return empty string on error
+sub getMAC
+{
+    my $macKey;
+    my $macVal;
+
+    vbTrace(__LINE__, (caller(0))[3], " Get macs list item from key");
+
+    if (defined($_[0]))
+    {
+        $macKey = $_[0];
+        vbTrace(__LINE__, (caller(0))[3], " * key is: $macKey");
+        $macVal = $macs{$macKey};
+        if (!defined($macVal))
+        {
+            vbTrace(__LINE__, (caller(0))[3], " * Nothing found in macs");
+            $macVal = "";
+        }
+    }
+
+    vbTrace(__LINE__, (caller(0))[3], " * Returning $macVal");
+    return $macVal;
+}
+
+
+# Set a macs list item value for the key in the first argument
+# to the value in the second argument
+sub setMAC
+{
+    my $macKey;
+    my $macVal;
+
+    vbTrace(__LINE__, (caller(0))[3], " Set MAC list item from key and value");
+
+    if (defined($_[0]) && defined($_[1]))
+    {
+        $macKey = $_[0];
+        vbTrace(__LINE__, (caller(0))[3], " * key is:   $macKey");
+        $macVal = $_[1];
+        vbTrace(__LINE__, (caller(0))[3], " * Value is: $macVal");
+        $macs{$macKey} = $macVal;
+    }
+}
+
+
+# Set a macs list item value for the key in the first argument
+# to a randomly generated MAC address
+sub setRandomMAC
+{
+    my $macAddr;
+    my $macKey;
+    my $replace;
+    my $octet;
+
+    vbTrace(__LINE__, (caller(0))[3], " Set MAC list item for key to a random value");
+
+    if (defined($_[0]) && defined($_[1]))
+    {
+        $macKey = $_[0];
+        $replace = 0 + $_[1];
+
+        # Check if the entry already exists
+        if ($macKey ne "")
+        {
+            $macAddr = getMAC($macKey);
+            if (!$replace && ($macAddr ne ""))
+            {
+                return;
+            }
+
+            # Generate the new address
+            $macAddr = @ouis[int(rand(1 + scalar @ouis))];
+            for ($i = 0; $i < 3; $i++)
+            {
+                # Byte value between 2 and 254
+                $octet = 2 + int(rand(252));
+                $macAddr .= ":";
+                $macAddr .= sprintf("%02x", $octet);
+            }
+
+            vbTrace(__LINE__, (caller(0))[3], " Generated MAC address: $macAddr");
+            setMAC($macKey, $macAddr);
+        }
+    }
+}
+
+# Get the NIC device model for a netdev=<n> NIC, defaults to virtio (virtio-net-pci - 2018-04-27)
+sub netdevNICtype
+{
+    my $netdev;
+    my $model = "virtio";
+
+    vbTrace(__LINE__, (caller(0))[3], " Getting netdev NIC type");
+
+    if (!defined($_[0]))
+    {
+        vbTrace(__LINE__, (caller(0))[3], " - No argument provided, returning default");
+        return $model;
+    }
+
+    $netdev = $netdevs{$_[0]};
+    if ($netdev)
+    {
+        vbTrace(__LINE__, (caller(0))[3], " - Using netdev $netdev");
+    }
+
+    vbTrace(__LINE__, (caller(0))[3], " * Returning $model as netdev NIC type");
+    return $model;
+}
+
+
+sub readStartDateFile
+{
+    my $sdfile;
+
+    if (!defined($_[0]))
+    {
+        die "Attempt to read startdate file without providing a file\n";
+    }
+    $sdfile = $_[0];
+
+    while (defined($sdfile) && ($startdate = <$sdfile>) && ($startdate =~ /^#(.*)/))
+    {
+    }
+    vbMessage("Using start date from file: $startdate");
+
+    if (!$startdate || ($startdate eq ""))
+    {
+        if ($localtime)
+        {
+            $dt = DateTime->now( time_zone => "local" );
+        }
+        else
+        {
+            $dt = DateTime->now();
+        }
+
+        $startdate = "$dt";
+        vbMessage("Using now as start date: $startdate");
+    }
+
+    if ($startdate =~ /^(\d{4})-(\d{2})-(\d{2})/)
+    {
+        $sy = $1;
+        $sm = $2;
+        $sd = $3;
+    }
+    if ($startdate =~ /^\d+-\d+-\d+T(\d{2})/)
+    {
+        $shr = $1;
+    }
+    if ($startdate =~ /^\d+-\d+-\d+T\d{2}:(\d{2})/)
+    {
+        $smn = $1;
+    }
+    if ($startdate =~ /^\d+-\d+-\d+T\d{2}:\d{2}:(\d{2})/)
+    {
+        $ssc = $1;
+    }
+
+    $sdt = new DateTime(	year	=> $sy,
+                month	=> $sm,
+                day	=> $sd,
+                hour	=> $shr,
+                minute	=> $smn,
+                second	=> $ssc );
+
+    vbMessage("Selected startdate: $sdt");
+    $starttime = DateTime->now();
+    vbMessage("Starting VM at $starttime");
+}
+
+
+sub writeStartDateFile
+{
+    my $sdfile;
+
+    if (!defined($_[0]))
+    {
+        die "Attempt to write startdate file without providing a file\n";
+    }
+    $sdfile = $_[0];
+
+    $vmelapsed = DateTime->now() - $starttime;
+    vbMessage("VM Elapsed runtime: $vmelapsed");
+    $vmelapsed->add(seconds => 15);
+    vbMessage("VM padded runtime: $vmelapsed");
+
+    $sdt->add($vmelapsed);
+    vbMessage("Next start time: $sdt");
+
+    $startdate = "$sdt";
+    vbMessage("Next start time value: $startdate");
+
+    vbMessage("Writing start date to file: $startdate");
+    print $sdfile "$startdate";
+}
+
+
+sub doStartDateFileOp
+{
+    my $sdOp;
+    my $sdfile;
+
+    # There has to be one
+    if ($startdatefile)
+    {
+        # ...and an operation r or w
+        if (!defined($_[0]))
+        {
+            die "Attempt to use startdate file without specifying an operation (r/w)\n";
+        }
+
+        $sdOp = $_[0];
+        if (!($sdOp =~ m/^[rw]$/i))
+        {
+            die "Unrecognized startdate operation $sdOp\n";
+        }
+
+        # For write there are some restrictions
+        if ($sdOp =~ m/w/i)
+        {
+            if ($daemonize || !$snapshot)
+            {
+                print "Startdate file used along with don\'t update startdate file option\n";
+                return;
+            }
+
+            open($sdfile, ">", $startdatefile);
+            writeStartDateFile($sdfile);
+        }
+        else
+        {
+            open($sdfile, "<", $startdatefile);
+            readStartDateFile($sdfile);
+        }
+
+        close($sdfile);
+    }
+}
+
+
+#
+# Verify the VGA Type is valid or impose a default
+#
+sub getVMGraphicsCard
+{
+    my $gCard;
+
+	if ($vgatype eq "std")
+	{
+        $gCard = "std";
+	}
+	elsif ($vgatype eq "vmware")
+	{
+        $gCard = "vmware";
+	}
+	elsif ($vgatype eq "qxl")
+	{
+        $gCard = "qxl";
+	}
+	elsif ($vgatype eq "virtio")
+	{
+        $gCard = "virtio";
+	}
+	elsif ($vgatype eq "none")
+	{
+        $gCard = "none";
+	}
+	else
+	{
+        # The default
+        $gCard = "cirrus";
+	}
+
+    vbMessage("getVMGraphicsCard returning: $gCard");
+
+	return $gCard;
+}
+
+
+#
+# Get a name for the VGA graphics card
+#
+sub getVMGraphicsCardName
+{
+    my $vgaName = "";
+
+    $vgatype = getVMGraphicsCard();
+
+	if ($vgatype eq "std")
+	{
+		$vgaName = "Standard VGA";
+	}
+	elsif ($vgatype eq "vmware")
+	{
+		$vgaName = "VMWare";
+	}
+	elsif ($vgatype eq "qxl")
+	{
+		$vgaName = "QXL";
+	}
+	elsif ($vgatype eq "virtio")
+	{
+		$vgaName = "virtio";
+	}
+	elsif ($vgatype eq "none")
+	{
+		$vgaName = "None";
+	}
+	elseif ($vgatype eq "cirrus")
+	{
+		print "Cirrus\n";
+	}
+
+    vbMessage("getVMGraphicsCardName returning: $vgaName");
+
+	return $vgaName;
+}
+
+
+# Process a configuration definition
+# This handles all cases and in nearly all cases the block for a given case
+# contains a return and this is called one item at a time by a caller walking
+# down the set of config items.
+# Some cases are quite complicated
 sub parseConfigItem
 {
 	my $chdev;
 	my $vs;
 	my $ln;
+	my $netdev;
 	my ($line) = @_;
 	chomp($line);
 
+    # Quick, do nothing exit for no arguments
 	if ((!$line) || ($line eq ""))
 	{
 		return;
 	}
 
+	# The next part seems over-complicated but is required to handle the case
+	# of sub-sections having a start item, [<sub-section name>] but no end of
+	# sub-section declaration. The end of sub-section can be inferred in
+	# the case of the start of a new sub-section (note they are not nested)
+
+    # Start of a sub-section:
+    # [<sub-section name>]
 	if ($line =~ m/^\[(.*)\]/)
 	{
 		print "Sub-section found $1\n" if ($verbose);
 
-		# If we are looking for a sub-section
+		# If we are not looking for a sub-section we can return with a message
 		if (!$subname)
 		{
 			print "No sub-section required\n" if ($verbose);
@@ -251,6 +775,7 @@ sub parseConfigItem
 			return;
 		}
 
+		# If we are looking for a sub-section and found it
 		if ($subname eq $1)
 		{
 			print "Found requested sub-section\n" if ($verbose);
@@ -258,22 +783,28 @@ sub parseConfigItem
 			$insub = 2;
 			return;
 		}
+		# We are looking for a sub-section but found the wrong one
 		else
 		{
 			print "Found sub-section other than that requested\n" if ($verbose);
 
+			# If we are already in the correct one then it has ended
 			if ($insub == 2)
 			{
 				$insub = 3;
 			}
+			# Otherwise we start a sub-section
 			else
 			{
 				$insub = 1;
 			}
+
+			# ... and exit (until we reach another sub-section)
 			return;
 		}
 	}
 
+	# Ignore an unwanted sub-section line
 	if (($insub == 1) || ($insub == 3))
 	{
 		print "Ignoring setting $line in not requested sub-section\n" if ($verbose);
@@ -281,12 +812,16 @@ sub parseConfigItem
 		return;
 	}
 
+    # Process the sub-secton we wanted, $insub will be 2 or
+    # not defined (the root section if you like)
+
 	if ($line =~ /^#(.*)/)						# pyqt
 	{
 		print "Comment: $1\n" if ($verbose);
 		return;
 	}
 
+    # Process as a setting line (adding a -- prefix if needed)
 	if ($line =~ /^--/)
 	{
 		$ln = $line;
@@ -296,9 +831,9 @@ sub parseConfigItem
 		$ln = "--".$line;
 	}
 	$line = $ln;
-
 	print __LINE__, ": ", (caller(0))[3], " Parsing $line\n" if ($debug);
 
+	# Generate a UUID
 	if ($line =~ /--genuuid/i)
 	{
 		$genuuid = 1;
@@ -309,6 +844,7 @@ sub parseConfigItem
 		$hack = 1;
 	}
 
+	# SCSI drive
 	# --sdrive<bus>.<lun>=<file>[,option,option...]
 	if ($line =~ /--sdrive(\d)\.(\d)=(.*)/i)
 	{
@@ -317,6 +853,7 @@ sub parseConfigItem
 		return;
 	}
 
+	# Virtio drive
 	# --vdrive<device>...
 	if ($line =~ /--vdrive\d+.*/i)
 	{
@@ -336,22 +873,37 @@ sub parseConfigItem
         }
     }
 
+	# Work without networking
+	if ($line =~ /--nonet/i)
+	{
+        print "no networking for guest\n" if ($verbose);
+		$nonet = 1;
+	}
+
+    # Legacy NIC definition
 	if ($line =~ /^--nic(\d)=(.*)/i)				# pyqt
 	{
 		print __LINE__, ": ", (caller(0))[3], " vlan $1 nic = $2\n" if ($verbose);
 		$nics{"vlan=$1"} = $2;
 		print __LINE__, ": ", (caller(0))[3], " netdev $1 nic = $2\n" if ($verbose);
-		$nics{"netdev=$1"} = $2;
+		$netdev = getNetdevFromNICnum($1);
+		if ($netdev)
+		{
+            $nics{$netdev} = $2;
+        }
 		return;
 	}
+	# Static MAC address for a NIC
 	if ($line =~ /^--mac(\d)=(.*)/i)				# pyqt
 	{
 		print __LINE__, ": ", (caller(0))[3], " vlan $1 mac = $2\n" if ($verbose);
-		$macs{"vlan=$1"} = $2;
+		setMAC("vlan=$1", $2);
 		print __LINE__, ": ", (caller(0))[3], " netdev $1 = $2\n" if ($verbose);
-		$macs{"netdev=$1"} = $2;
+		$netdev = getNetdevFromNICnum($1);
+		setMAC($netdev, $2);
 		return;
 	}
+	# Virtual LAN configuration
 	if ($line =~ /^--vlan(\d)=(.*)/i)				# pyqt
 	{
 		print __LINE__, ": ", (caller(0))[3], " vlan $1 = $2\n";# if ($verbose);
@@ -370,33 +922,43 @@ sub parseConfigItem
 		my $nmvNIC = "vlan=$1";
 		
 		print "netdev $1 = $2\n" if ($verbose);
-		$netdevs{"netdev=$1"} = $2;
+        $netdev = getNetdevFromNICnum($1);
+        setNetdev($netdev, $2);
 		
-		# Remove it's vlan nic
+		# Remove any vlan nic
 		delete $nics{$nmvNIC};
 		
-		# ... and it's vlan MAC
+		# ... and any vlan MAC
 		delete $macs{$nmvNIC};
 		
 		return;
 	}
 
+	# Declare a USB device
 	if ($line =~ /^--usbdevice=(.*)/i)
 	{
 		print "USB device = $1\n" if ($verbose);
+		if (!$usb)
+		{
+            print "Enabling USB interface" if ($verbose);
+            $usb = 1;
+		}
 		$i = 0 + @usbdevices;
 		$usbdevices[$i] = $1;
 		return;
 	}
 
-	
+    # Disable the USB controller
 	if ($line =~ /^--nousb$/i)					# pyqt
 	{
-		print "Disable guest USB controller\n" if ($verbose);
+        die "Unable to disable guest USB controller due to pre-existing USB devices" if (@usbdevices > 0);
+
+        print "Disable guest USB controller\n" if ($verbose);
 		$usb = 0;
 		return;
 	}
 
+	# Use a PS/2 keyboard interface
 	if ($line =~ /^--nousbkbd$/i)
 	{
 		print "Don\'t use USB keyboard (use i8042 keyboard instead)\n" if ($verbose);
@@ -404,13 +966,15 @@ sub parseConfigItem
 		return;
 	}
 
+	# Use a PS/2 mouse interface
 	if ($line =~ /^--nousbmouse$/i)
 	{
 		print "Don\'t use USB mouse (use i8042 mouse instead)\n" if ($verbose);
 		$usbmouse = 0;
 		return;
 	}
-	
+
+	# Change the mouse/keyboard grab method from Ctrl-Alt to Ctrl-Alt-Shift
 	if ($line =~ /^--alt-grab$/i)
 	{
         print "Use alternate grab keystroke (Ctrl-Alt-Shift)\n" if ($verbose);
@@ -418,6 +982,8 @@ sub parseConfigItem
         return;
 	}
 
+	# Define a SCSI disk:
+	# e.g.: --scsi0=<path to disk image>[,other arguments]
 	if ($line =~/^--scsi(\d)=(.*)/i)
 	{
 		print "SCSI Drive $1 = $2\n" if ($verbose);
@@ -427,6 +993,7 @@ sub parseConfigItem
 
 #print "TRYING TO FIND OPTIONS in $line !!!!!!!!!!!!!!!!!!!\n";
 
+    # Additional options, i.e. raw qemu command-line syntax
 	if ($line =~ /^--options=(.*)/i)
 	{
 		print "Additional options = $1\n" if ($verbose);
@@ -434,6 +1001,7 @@ sub parseConfigItem
 		return;
 	}
 
+	# Guest name (used for display window)
 	if ($line =~ /^--name=(.*)/i)					# pyqt
 	{
 		print "VM Name = $1\n" if ($verbose);
@@ -441,6 +1009,8 @@ sub parseConfigItem
 		return;
 	}
 
+	# GetOptionsFromString() can handle the rest by giving us the setting
+	# value in a relevant variable
 	$chdev = "";
 	($ret, $remainder) = GetOptionsFromString($ln, 
 					'cpu=s' => \$cpu,		# pyqt
@@ -498,23 +1068,28 @@ sub parseConfigItem
 					'vs' => \$vs,
 					'win2khack' => \$win2khack);
 
-	if ($ret)
+    # Do some verification or information output
+    if ($ret)
 	{
+        # Handle some error cases
 		die "You need at least one CPU\n" if ($cpus < 1);
 		die "Memory size too small" if ($mem < 4);
 		die "The QMP server setting must be a tcp port number\n" if (($ln eq 'qmpserver') && (($qmpserverport < 1) || ($qmpserverport > 65535)));
-		
+
+		# QMP server being used for disk, show the back-end server specified
 		if ($ln =~ /qmpserver/i)
 		{
 			print "QMP Server set, line is $ln, port is $qmpserverport\n";
 		}
 
+		# Special way to turn on verbose and snapshot with one argument --verbosnap
 		if ($vs) {
 			print "Going verbose and snapshot\n" if ($debug);
 			$verbose = 1;
 			$snapshot = 1;
 		}
 
+		# Save any chardevs
 		if ($chdev ne "") {
 			push @chardevs,($chdev);
 		}
@@ -522,28 +1097,26 @@ sub parseConfigItem
 		return;
 	}
 
-#		$hda = $vmdir.$1;
-#		$hdb = $vmdir.$1;
-#		$hdc = $vmdir.$1;
-#		$hdd = $vmdir.$1;
-#		$cdrom = $vmdir.$1;
-
+    # Something unhandled
 	die "Unrecognized configuration item $line\n";
 }
 
 
+# Generate the default directory path we expect config files in
 sub getConfigDir
 {
 	my $cfgdir;
 
 	# Extract the generic base directory for VM configs from the environment
 	$cfgdir = $ENV{HOME}."/.vmlauncher/";
-	print __LINE__, ": ", (caller(0))[3], " finds $cfgdir\n" if ($debug);
+	dbTrace(__LINE__, (caller(0))[3], " finds $cfgdir");
 
 	return $cfgdir;
 }
 
 
+# If we used --vm=<config file> and have an expected config file then generate
+# the complete path we expect for it
 sub getConfigFileName
 {
 	my $cfgFileName = "";
@@ -559,34 +1132,202 @@ sub getConfigFileName
 }
 
 
+# If there is a CPU setting, check the value is valid
 sub CPUIsValid
 {
 	# Check if the value in the global CPU variable is supported
-	if ( ($cpu eq "Opteron_G3") 
-		|| ($cpu eq "Opteron_G2")
-		|| ($cpu eq "Opteron_G1")
-		|| ($cpu eq "Nehalem")
-		|| ($cpu eq "Penryn")
-		|| ($cpu eq "Conroe")
-		|| ($cpu eq "n270")
-		|| ($cpu eq "athlon")
-		|| ($cpu eq "pentium3")
-		|| ($cpu eq "pentium2")
-		|| ($cpu eq "pentium")
-		|| ($cpu eq "486")
-		|| ($cpu eq "coreduo")
-		|| ($cpu eq "kvm32")
-		|| ($cpu eq "qemu32")
-		|| ($cpu eq "kvm64")
-		|| ($cpu eq "qemu64")
-		|| ($cpu eq "core2duo")
-		|| ($cpu eq "phenom")
-		|| ($cpu eq "host") )
+	if ($cpu ~~ @validCPUs)
 	{
 		return 1;
 	}
 
 	return 0;
+}
+
+
+sub writeVMConfigItem
+{
+    my $vmcfg;
+    my $setting;
+    my $value;
+
+    if (!defined($0))
+    {
+        print "No file supplied to save configuration\'s item\n";
+        return;
+    }
+    $vmcfg = $_[0];
+
+    if (!defined($_[1]))
+    {
+        return;
+    }
+    $setting = $_[1];
+
+    if (defined($_[2]))
+    {
+        $value = $_[2];
+    }
+
+    print $vmcfg "$setting";
+    if (defined($value))
+    {
+        print $vmcfg "=$value";
+    }
+    print $vmcfg "\n";
+}
+
+
+sub generateVMDiskCommandLine
+{
+    my $diskID;
+    my $fname;
+
+    if (!defined($_[0]))
+    {
+        print "No device given for disk command-line\n";
+        return;
+    }
+    $diskID = $_[0];
+
+    if (!defined($_[1]))
+    {
+        die "No filename given for disk $diskID command-line\n";
+    }
+    $fname = $_[1];
+
+    vbTrace(__LINE__, (caller(0))[3], " Generate command-line entries for a basic disk");
+
+    dbTrace(__LINE__, (caller(0))[3], " Disk: $diskID is $fname");
+    $cmdline .= " -";
+    $cmdline .= "$diskID $fname";
+}
+
+
+sub dumpVMConfigItem
+{
+    my $setting;
+    my $value;
+
+    if (!defined($_[0]))
+    {
+        print "No setting given for dump VM config item\n";
+        return;
+    }
+    $setting = $_[0];
+
+    if (defined($_[1]))
+    {
+        $value = $_[1];
+    }
+
+    print __LINE__, ": ", (caller(0))[3], " Config setting: $setting";
+    if (defined($value))
+    {
+        print "  = $value\n";
+    }
+    else
+    {
+        print " SET\n";
+    }
+}
+
+
+#
+# Given a key that's a device name (fda, hdb, etc) and a filename, prefix it
+# with any VM prefix directory and add it to the basicDrives list
+#
+sub setVMDirDiskPath
+{
+    my $devID;
+    my $fullPath;
+
+    vbTrace(__LINE__, (caller(0))[3], " setVMDirDiskPath");
+
+    if (defined($_[0]) && defined($_[1]))
+    {
+        $devID = $_[0];
+        $fullPath = $vmdir.$_[1];
+        $basicDrives{$devID} = $fullPath;
+        dbTrace(__LINE__, (caller(0))[3], " VMDirDiskPath: $devID is $fullPath");
+    }
+}
+
+
+#
+# For each device of a given type do an operation on it
+#
+sub doVMDevOp
+{
+    my $opName;
+    my $vmcfg;
+    my $devID;
+    my $valueSaved;
+    my $devSet;
+    my @theKeys;
+
+    if (!defined($_[0]))
+    {
+        print "No operation specified for do VM FDD Operation\n";
+        return;
+    }
+    $opName = $_[0];
+
+    # Is the operation one we support
+    if (!($opName ~~ @opsForBasicDrives))
+    {
+        print "Unrecognized operation $opName supplied for do VM FDD Operation\n";
+        return;
+    }
+
+    # Get the device set
+    if (!defined($_[1]))
+    {
+        print "No device set specified for do VM device Operation\n";
+        return;
+    }
+    $devSet = $_[1];
+
+    if ($devSet eq "FDD")
+    {
+        @theKeys = @fddKeys;
+    }
+    elsif ($devSet eq "HDD")
+    {
+        @theKeys = @hddKeys;
+    }
+    else
+    {
+        die "Unrecognized device set $devSet in do VMFDDOp\n";
+    }
+
+    # Get any config file
+    if (defined($_[2]))
+    {
+        $vmcfg = $_[2];
+    }
+
+    foreach (@theKeys)
+    {
+        # Ignore non-existent or empty ones
+        next if ((!defined($basicDrives{$_})) || ($basicDrives{$_} eq ""));
+        print __LINE__, ": ", (caller(0))[3], " Device: $_ is ".$basicDrives{$_}."\n" if ($debug);
+
+        $devID = $_;
+        $valueSaved = $basicDrives{$devID};
+        if ($opName eq "dump")
+        {
+            dumpVMConfigItem($devID, $valueSaved);
+        }
+        elsif ($opName eq "write")
+        {
+            writeVMConfigItem($vmcfg, $devID, $valueSaved);
+        }
+        elsif ($opName eq "genCmd")
+        {
+            generateVMDiskCommandLine($devID, $valueSaved);
+        }
+    }
 }
 
 
@@ -647,27 +1388,7 @@ sub createNewVM
 	{
 		print $vmcfg "localtime\n";
 	}
-	if ($vgatype eq "std")
-	{
-		print $vmcfg "vga=std\n";
-	}
-	elsif ($vgatype eq "vmware")
-	{
-		print $vmcfg "vga=vmware\n";
-	}
-	elsif ($vgatype eq "qxl")
-	{
-		print $vmcfg "vga=qxl\n";
-	}
-	elsif ($vgatype eq "none")
-	{
-		print $vmcfg "vga=none\n";
-	}
-	else
-	{
-		# The default
-		print $vmcfg "vga=cirrus\n";
-	}
+	writeVMConfigItem($vmcfg, "vga", $vgatype);
 	if (defined($vnc))
 	{
         # Parameter format is [<ip>]:<display>[,<other argument>[,<other argument[,etc]]]
@@ -698,171 +1419,12 @@ sub createNewVM
 	{
         print $vmcfg "alt-grab\n";
 	}
-	if ($fda)
-	{
-		print $vmcfg "fda=$fda\n";
-	}
-	if ($fdb)
-	{
-		print $vmcfg "fdb=$fdb\n";
-	}
+	doVMDevOp("write", "FDD", $vmcfg);
 	if ($hack)
 	{
 		print $vmcfg "hack\n";
 	}
-	if ($hda)
-	{
-		if ($hda =~ /(.+),(\d+.)$/i)
-		{
-			$diskSize = $2;
-			$hda = $1;
-            if ($pretendExec)
-			{
-                print("\nsystem: $qemuimgbin create -f qcow2 $hda $2\n");
-			}
-			else
-			{
-                system("$qemuimgbin create -f qcow2 $hda $2");
-            }
-		}
-		print $vmcfg "hda=$hda\n";
-	}
-	if ($hdb)
-	{
-		if ($hdb =~ /(.+),(\d+.)$/i)
-		{
-			$diskSize = $2;
-			$hdb = $1;
-            if ($pretendExec)
-			{
-                print("\nsystem: $qemuimgbin create -f qcow2 $hdb $2\n");
-			}
-			else
-			{
-                system("$qemuimgbin create -f qcow2 $hdb $2");
-            }
-		}
-		print $vmcfg "hdb=$hdb\n";
-	}
-	if ($hdc)
-	{
-		if ($hdc =~ /(.+),(\d+.)$/i)
-		{
-			$diskSize = $2;
-			$hdc = $1;
-            if ($pretendExec)
-			{
-                print("\nsystem: $qemuimgbin create -f qcow2 $hdc $2\n");
-			}
-			else
-			{
-                system("$qemuimgbin create -f qcow2 $hdc $2");
-			}
-		}
-		print $vmcfg "hdc=$hdc\n";
-	}
-	if ($hdd)
-	{
-		if ($hdd =~ /(.+),(\d+.)$/i)
-		{
-			$diskSize = $2;
-			$hdd = $1;
-            if ($pretendExec)
-			{
-                print("\nsystem: $qemuimgbin create -f qcow2 $hdd $2\n");
-			}
-			else
-			{
-                system("$qemuimgbin create -f qcow2 $hdd $2");
-            }
-		}
-		print $vmcfg "hdd=$hdd\n";
-	}
-	if ($sda)
-	{
-		if ($sda =~ /(.+),(\d+.)$/i)
-		{
-			$diskSize = $2;
-			$sda = $1;
-            if ($pretendExec)
-			{
-                print("\nsystem: $qemuimgbin create -f qcow2 $sda $2\n");
-			}
-			else
-			{
-                system("$qemuimgbin create -f qcow2 $sda $2");
-            }
-		}
-		print $vmcfg "sda=$sda\n";
-	}
-	if ($sdb)
-	{
-		if ($sdb =~ /(.+),(\d+.)$/i)
-		{
-			$diskSize = $2;
-			$sdb = $1;
-            if ($pretendExec)
-			{
-                print("\nsystem: $qemuimgbin create -f qcow2 $sdb $2\n");
-			}
-			else
-			{
-                system("$qemuimgbin create -f qcow2 $sdb $2");
-            }
-		}
-		print $vmcfg "sdb=$sdb\n";
-	}
-	if ($sdc)
-	{
-		if ($sdc =~ /(.+),(\d+.)$/i)
-		{
-			$diskSize = $2;
-			$sdc = $1;
-            if ($pretendExec)
-			{
-                print("\nsystem: $qemuimgbin create -f qcow2 $sdc $2\n");
-			}
-			else
-			{
-                system("$qemuimgbin create -f qcow2 $sdc $2");
-            }
-		}
-		print $vmcfg "sdc=$sdc\n";
-	}
-	if ($sdd)
-	{
-		if ($sdd =~ /(.+),(\d+.)$/i)
-		{
-			$diskSize = $2;
-			$sdd = $1;
-            if ($pretendExec)
-			{
-                print("\nsystem: $qemuimgbin create -f qcow2 $sdd $2\n");
-			}
-			else
-			{
-                system("$qemuimgbin create -f qcow2 $sdd $2");
-            }
-		}
-		print $vmcfg "sdd=$sdd\n";
-	}
-	if ($sdi)
-	{
-		if ($sdi =~ /(.+),(\d+.)$/i)
-		{
-			$diskSize = $2;
-			$sdi = $1;
-            if ($pretendExec)
-			{
-                print("\nsystem: $qemuimgbin create -f qcow2 $sdi $2\n");
-			}
-			else
-			{
-                system("$qemuimgbin create -f qcow2 $sdi $2");
-            }
-		}
-		print $vmcfg "sdi=$sdi\n";
-	}
+	doVMDevOp("write", "HDD", $vmcfg);
 	if ($cdrom)
 	{
 		print $vmcfg "cdrom=$cdrom\n";
@@ -1031,99 +1593,92 @@ sub createNewVM
 		}
     }
 
-    # Process the netdevs
-    #
-    # Example create syntax for two NICs is:
-    # --nic0=virtio --netdev0=tap,ifname=gentap,bridge=br8,script=no
-    #  --nic1=virtio --netdev1=tap,ifname=gentap,bridge=br0,script=no
-    #
-    # example config outcome for same two NICs is:
-    # nic0=virtio
-    # mac0=00:25:3F:9d:1b:0e
-    # netdev0=tap,ifname=gentap,bridge=br8,script=no
-    # nic1=virtio
-    # mac1=00:25:3F:ad:0b:1e
-    # netdev1=tap,ifname=gentap,bridge=br1,script=no
-    #
-    # Example qemu command-line outcome for same two NICs is:
-    #  -netdev tap,id=dwh1847,ifname=kvmtap1847,script=no
-    #  -device virtio-net-pci,netdev=dwh1847
-    #
-    #  -netdev tap,id=dwh9896,ifname=kvmtap9896,script=no
-    #  -device virtio-net-pci,netdev=dwh9896 
-    #
-    printf "Process the netdevs: createNewVM\n" if ($verbose);
-	foreach (sort keys(%netdevs))
-	{
-		my $n = 0;
-        my $ifname;
-        my $macaddr;
-	
-		if ($debug != 0)
-		{
-			printf "Generating netdev and associated NIC device $_ configuration\n";
-		}
-
-        #  netdev number (default is zero)
-		if ($_ =~ /netdev=(\d)/i)
-		{
-			$n = $1;
-		}
-		
-        # If no netdev type was specified we should look in the vlan setting
-        if (!$nics{$_})
+    if ($nonet)
+    {
+		print $vmcfg "nonet\n";
+    }
+    else
+    {
+        # Process the netdevs
+        #
+        # Example create syntax for two NICs is:
+        # --nic0=virtio --netdev0=tap,ifname=gentap,bridge=br8,script=no
+        #  --nic1=virtio --netdev1=tap,ifname=gentap,bridge=br0,script=no
+        #
+        # example config outcome for same two NICs is:
+        # nic0=virtio
+        # mac0=00:25:3F:9d:1b:0e
+        # netdev0=tap,ifname=gentap,bridge=br8,script=no
+        # nic1=virtio
+        # mac1=00:25:3F:ad:0b:1e
+        # netdev1=tap,ifname=gentap,bridge=br1,script=no
+        #
+        # Example qemu command-line outcome for same two NICs is:
+        #  -netdev tap,id=dwh1847,ifname=kvmtap1847,script=no
+        #  -device virtio-net-pci,netdev=dwh1847
+        #
+        #  -netdev tap,id=dwh9896,ifname=kvmtap9896,script=no
+        #  -device virtio-net-pci,netdev=dwh9896
+        #
+        # 2018/02/15 - Add support for a type= option to change NIC model from virtio
+        #
+        printf "Process the netdevs: createNewVM\n" if ($verbose);
+        foreach (sort keys(%netdevs))
         {
-            # Syntax only allows for bridge name and nic type
-            if ($netdevs{$_} =~ /tapbridge=(.+)[\,].*$/i)
+            my $n;
+            my $ifname;
+            my $macaddr;
+            my $netdev;
+
+            if ($debug != 0)
             {
-                $netdevs{$_} = "tap,bridge=$1,ifname=gentap,script=no,downscript=no";
+                printf "Generating netdev and associated NIC device $_ configuration\n";
             }
-            if ($netdevs{$_} =~ /nic=(.+)/i)
+
+            $netdev = getNetdev($_);
+
+            # If no netdev type was specified we should look in the vlan setting
+            if (!$nics{$_})
             {
-                $nics{$_} = $1;
+                # Syntax only allows for bridge name and nic type
+                if ($netdev =~ /tapbridge=(.+)[\,].*$/i)
+                {
+                    $netdev = "tap,bridge=$1,ifname=gentap,script=no,downscript=no";
+                    setNetdev($_, $netdev);
+                }
+                if ($netdev =~ /nic=(.+)/i)
+                {
+                    $nics{$_} = $1;
+                }
             }
-#			if (!$nics{$_})
-#			{
-#				die "Invalid auto-generate tap/bridge syntax\n";
-#				$nics{$_} = " ";
-#			}
+
+            # If no MAC address was specified or we are cloning a config then generate one
+            $macaddr = getMAC($_);
+            if (((!defined($macaddr)) || (!$macaddr) || ($macaddr eq "")) || ($createVM && ($vmsource ne "")))
+            {
+                setRandomMAC($_, 1);
+            }
+
+            # Write out the settings
+            #  netdev number (default is zero)
+            $n = getNetdevNICnumber($_);
+            if ($n >= 0)
+            {
+                $macaddr = getMAC($_);
+                if ($nics{$_})
+                {
+                    print $vmcfg "nic$n=$nics{$_}\n";
+                }
+                print $vmcfg "mac$n=$macaddr\n";
+                print $vmcfg "netdev$n=$netdev\n";
+            }
         }
 
-        # If no MAC address was specified or we are cloning a config then generate one
-        if ((!$macs{$_}) || ($createVM && ($vmsource ne "")))
+        if ($net)
         {
-            my $octet;
-            $macaddr = @ouis[int(rand(1 + scalar @ouis))];
-            # Generate a mac address
-            for ($i = 0; $i < 3; $i++)
-            {
-                # Byte value between 2 and 254
-#				$octet = (int(rand(126)) + 1) << 1;
-                $octet = 2 + int(rand(252));
-                $macaddr .= ":";
-                $macaddr .= sprintf("%02x", $octet);
-            }
-
-            printf __LINE__, ": ", (caller(0))[3], " Generated MAC address: $macaddr\n" if ($verbose);
-            $macs{$_} = $macaddr;
+            print $vmcfg "net=$net\n";
         }
-
-        # Write out the settings
-        if ($_ =~ /^netdev=(\d)/i)
-        {
-            if ($nics{$_})
-            {
-                print $vmcfg "nic$1=$nics{$_}\n";
-            }
-            print $vmcfg "mac$1=$macs{$_}\n";
-            print $vmcfg "netdev$1=$netdevs{$_}\n";
-        }
-	}
-
-	if ($net)
-	{
-		print $vmcfg "net=$net\n";
-	}
+    }
 
 	foreach (keys(%scsidrives))
 	{
@@ -1241,6 +1796,8 @@ sub editVMConfig
 
 sub dumpVMConfig
 {
+    my $wspace;
+
 	print "Effective VM Configuration\n\n";
 
 	if (! ($name eq ""))
@@ -1279,27 +1836,8 @@ sub dumpVMConfig
 		print "UTC\n";
 	}
 	print "DISPLAY:      ";
-	if ($vgatype eq "std")
-	{
-		print "Standard VGA\n";
-	}
-	elsif ($vgatype eq "vmware")
-	{
-		print "VMWare\n";
-	}
-	elsif ($vgatype eq "qxl")
-	{
-		print "QXL\n";
-	}
-	elsif ($vgatype eq "none")
-	{
-		print "None\n";
-	}
-	else
-	{
-		# The default
-		print "Cirrus\n";
-	}
+	$wspace = getVMGraphicsCardName();
+	print "$wspace\n";
 	if (defined($vnc))
 	{
 		print " VNC:         $vnc\n";
@@ -1343,50 +1881,8 @@ sub dumpVMConfig
 	{
         print "Use default mouse grab keystroke (Ctrl-Alt)\n" if ($verbose);
 	}
-	if ($fda)
-	{
-		print "FLOPPY 0:     $fda\n";
-	}
-	if ($fdb)
-	{
-		print "FLOPPY 1:     $fdb\n";
-	}
-	if ($hda)
-	{
-		print "IDE 0:MASTER: $hda\n";
-	}
-	if ($hdb)
-	{
-		print "IDE 0:SLAVE:  $hdb\n";
-	}
-	if ($hdc)
-	{
-		print "IDE 1:MASTER: $hdc\n";
-	}
-	if ($hdd)
-	{
-		print "IDE 1:SLAVE:  $hdd\n";
-	}
-	if ($sda)
-	{
-		print "SCSI 0:DEV 0: $sda\n";
-	}
-	if ($sdb)
-	{
-		print "SCSI 0:DEV 1: $sdb\n";
-	}
-	if ($sdc)
-	{
-		print "SCSI 0:DEV 2: $sdc\n";
-	}
-	if ($sdd)
-	{
-		print "SCSI 0:DEV 3: $sdd\n";
-	}
-	if ($sdi)
-	{
-		print "SCSI 1:DEV 0: $sdi\n";
-	}
+	doVMDevOp("dump", "FDD");
+    doVMDevOp("dump", "HDD");
 	if ($cdrom)
 	{
 		print "CD/DVD DRIVE: $cdrom\n";
@@ -1527,43 +2023,55 @@ sub dumpVMConfig
 		print "SHOW BIOS BOOT DEVICE MENU\n";
 	}
 
-	foreach (keys(%vlans))
+	if ($nonet)
 	{
-#		my $ifname;
-	
-#		die "No NIC for $_\n" if (!$nics{$_});
-        next if ($nics{$_} eq "");
-        
-		print "NIC:          $_\n";
-		if ($nics{$_})
-		{
-			print "              $nics{$_}\n";
-		} else {
-			print "              default NIC\n";
-		}
-		print "              $macs{$_}\n";
+		print "GUEST WITH NO NETWORKING\n";
 	}
+	else
+	{
+        foreach (keys(%vlans))
+        {
+    #		my $ifname;
 
-    # netdev NICs
-	foreach (keys(%netdevs))
-	{
-		my $ifname;
-	
-#		die "No NIC for $_\n" if (!$nics{$_});
-		print "NIC(netdev):  $_\n";
-		if ($nics{$_})
-		{
-			print "              $nics{$_}\n";
-		} else {
-			print "              default NIC\n";
-		}
-		print "              $macs{$_}\n";
-	}
+    #		die "No NIC for $_\n" if (!$nics{$_});
+            next if ($nics{$_} eq "");
 
-	if ($net)
-	{
-		print "Net (Extra):  $net\n";
-	}
+            print "NIC:          $_\n";
+            if ($nics{$_})
+            {
+                print "              $nics{$_}\n";
+            } else {
+                print "              default NIC\n";
+            }
+            print "              $macs{$_}\n";
+        }
+
+        # netdev NICs
+        foreach (keys(%netdevs))
+        {
+            my $ifname;
+            my $mac;
+            my $netdev = getNetdev($_);
+
+            print "NIC(netdev):  $_\n";
+            if ($nics{$netdev})
+            {
+                print "              $nics{$netdev}\n";
+            } else {
+                print "              default NIC\n";
+            }
+            $mac = getMAC($netdev);
+            if (defined($mac) && ($mac ne ""))
+            {
+                print "              $mac\n";
+            }
+        }
+
+        if ($net)
+        {
+            print "Net (Extra):  $net\n";
+        }
+    }
 
 	foreach (keys(%scsidrives))
 	{
@@ -1675,11 +2183,14 @@ sub generateVMCommandLine
 	if (!$hack)
 	{
 		$cmdline = $qemubin;
+		# DWH: 04/25/2018 try to remove FD controller and other noise but have
+		# a watchdog device
+		$cmdline .= " -nodefaults -watchdog i6300esb -watchdog-action poweroff";
 	}
 	else
 	{
         $cmdline = $qemubin;
-        $cmdline .= " -accel kvm";
+        $cmdline .= " -nodefaults -watchdog i6300esb";
 		#$cmdline = $qemuhack;
 	}
 	
@@ -1693,9 +2204,19 @@ sub generateVMCommandLine
 		$cmdline .= " -cpu $cpu";
 	}
 	$cmdline .= " -smp $cpus";
-	$cmdline .= " -m $mem";
+	$cmdline .= " -m size=$mem";
+	$cmdline .= "M";
 	$cmdline .= " -uuid $uuid" if ($uuid ne "");
-	$cmdline .= " -localtime" if ($localtime);
+#   2018/04/27
+#	$cmdline .= " -localtime" if ($localtime);
+    if ($localtime)
+    {
+        $cmdline .= " -rtc base=localtime";
+    }
+    else
+    {
+        $cmdline .= " -rtc base=utc";
+    }
 
 	if ($usb)
 	{
@@ -1711,62 +2232,13 @@ sub generateVMCommandLine
 	$cmdline .= " -alt-grab" if ($altgrab);
 
 	#Floppy disks
-	if ($fda)
-	{
-        $cmdline .= " -fda $fda";
-        # $cmdline .= " -drive if=none,id=FD-A,file=$fda -global isa-fdc,driveA=FD-A,driveB=FD-B";
-	}
-	if ($fdb)
-	{
-		$cmdline .= " -fdb $fdb";
-	}
-	
+	doVMDevOp("genCmd", "FDD");
+
 	# IDE Hard disks
-	if ($hda)
-	{
-		$cmdline .= " -hda $hda";
-	}
-	if ($hdb)
-	{
-		$cmdline .= " -hdb $hdb";
-	}
-	if ($hdc)
-	{
-		$cmdline .= " -hdc $hdc";
-	}
-	if ($hdd)
-	{
-		$cmdline .= " -hdd $hdd";
-	}
-	
-	# SCSI Hard disks
-	if ($sda)
-	{
-		$cmdline .= " -drive file=$sda,if=scsi,bus=0,unit=0";
-# 		if (!$hda && $boot && ($boot =~ "c" || $boot =~ "C"))
-# 		{
-# 			$cmdline .= ",boot=on"
-# 		}
-	}
-	if ($sdb)
-	{
-		$cmdline .= " -drive file=$sdb,if=scsi,bus=0,unit=1,cache=none"
-	}
-	if ($sdc)
-	{
-		$cmdline .= " -drive file=$sdc,if=scsi,bus=0,unit=2"
-	}
-	if ($sdd)
-	{
-		$cmdline .= " -drive file=$sdd,if=scsi,bus=0,unit=3"
-	}
-	if ($sdi)
-	{
-		$cmdline .= " -drive file=$sdi,if=scsi,bus=1,unit=0,cache=none"
-	}
+	doVMDevOp("genCmd", "HDD");
 
 	# CD-ROM
-	if ($cdrom || $rip)
+	if ($basicDrives{"cdrom"} || $rip)
 	{
 		$cmdline .= " -cdrom ";
 		if ($rip)
@@ -1775,7 +2247,7 @@ sub generateVMCommandLine
 		}
 		else
 		{
-			$cmdline .= $cdrom;
+			$cmdline .= $basicDrives{"cdrom"};
 		}
 	}
 
@@ -1891,185 +2363,272 @@ sub generateVMCommandLine
 		}
 	}
 	
-	# NICs by vlan
-	print __LINE__, ": ", (caller(0))[3], " Process the vlans\n" if ($verbose);
-	foreach (sort keys(%vlans))
+	if ($nonet)
 	{
-		my $ifname;
-		my $vlanport;
-		my $copyvlan;
-		my $i;
-		
-#		die "No NIC for $_\n" if (!$nics{$_});
+        print __LINE__, ": ", (caller(0))[3], " Turn off guest networking\n" if ($verbose);
+        $cmdline .= " -net none";
+	}
+	else
+	{
+        # NICs by vlan
+        print __LINE__, ": ", (caller(0))[3], " Process the vlans\n" if ($verbose);
+        foreach (sort keys(%vlans))
+        {
+            my $ifname;
+            my $vlanport;
+            my $copyvlan;
+            my $mac;
+            my $i;
 
-        next if ($_ eq "");
+    #		die "No NIC for $_\n" if (!$nics{$_});
 
-		if ($nics{$_})
-		{
+            next if ($_ eq "");
             print __LINE__, ": ", (caller(0))[3], " Processing NIC for VLAN $_ value is $nics{$_}\n" if ($verbose);
-            
-			if ($nics{$_} =~ /^i82.*$/)
-			{
-                print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
-				$cmdline .= " -device $nics{$_},$_";
-				$cmdline .= ",mac=$macs{$_}" if ($macs{$_});
-			}
-			elsif ($nics{$_} =~ /^usb-net$/)
-			{
-                print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
-				$cmdline .= " -device $nics{$_},$_";
-				$cmdline .= ",mac=$macs{$_}" if ($macs{$_});
-			}
-			else
-			{
-                print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
-				$cmdline .= " -net nic,$_,model=$nics{$_}";
-				$cmdline .= ",macaddr=$macs{$_}" if ($macs{$_});
-			}
-		} else {
-            print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
-			$cmdline .= " -net nic,$_";
-		}
 
-		$vlanport = $vlans{$_};
-		if ($vlanport =~ /^vlan(\d)$/i)
-		{
-			$copyvlan = "vlan=$1";
-			$vlans{$_} = $vlans{$copyvlan};
-		}
-		if (($vlans{$_} =~ /,ifname=gentap/i) || ($vlans{$_} =~ /,gentap/i ))
-		{
-			$ifname = (rand() * 10000) % 10000;
-			$i = 0 + @taps;
-			$taps[$i] = "kvmtap".sprintf("%d", $ifname);
-			$vlans{$_} =~ s/,ifname=gentap/,ifname=$taps[$i]/i;
-			$vlans{$_} =~ s/,gentap/,ifname=$taps[$i]/i;
-	
-			my $us = $_;
-	
-			print __LINE__, ": ", (caller(0))[3], " Bridge parsing $vlans{$_}\n" if $verbose;
-	
-			if ($vlans{$_} =~ /,bridge=(.*?),/i)
-			{
-				$bridges{$taps[$i]} = $1;
-				$vlans{$us} =~ s/,bridge=.*?,/,/i;
-				print "  Found bridge $bridges{$taps[$i]}, modified vlan: $vlans{$us}\n" if ($verbose);
-			}
-		}
-	
-		$cmdline .= " -net $vlans{$_},$_";
-	}
-	
-	# Generate netdevs and related device command-line elements, e.g.:
-    # -netdev tap,id=dwh1847,ifname=kvmtap1847,script=no
-    # -device virtio-net-pci,netdev=dwh1847
-    #
-    # -netdev tap,id=dwh9896,ifname=kvmtap9896,script=no
-    # -device virtio-net-pci,netdev=dwh9896 
-	print __LINE__, ": ", (caller(0))[3], " Process the netdevs\n" if ($verbose);
-	foreach (sort keys(%netdevs))
-	{
-		my $idnum;
-		my $idname;
-		my $netdevport;
-		my $copynetdev;
-		my $i;
-		my $ifname;
-	
-#		die "No NIC for $_\n" if (!$nics{$_});
-        printf __LINE__, ": ", (caller(0))[3], " Processing NIC for netdev $_ value is $nics{$_}\n" if ($verbose && $nics{$_});
+            if ($nics{$_})
+            {
+                print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
+                $mac = getMAC($_);
+                if ($nics{$_} =~ /^i82.*$/)
+                {
+                    print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
+                    $cmdline .= " -device $nics{$_},$_";
+                    if (defined($mac) && ($mac ne ""))
+                    {
+                        $cmdline .= ",mac=$mac";
+                    }
+                }
+                elsif ($nics{$_} =~ /^usb-net$/)
+                {
+                    print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
+                    $cmdline .= " -device $nics{$_},$_";
+                    if (defined($mac) && ($mac ne ""))
+                    {
+                        $cmdline .= ",mac=$mac";
+                    }
+                }
+                else
+                {
+                    print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
+                    $cmdline .= " -net nic,$_,model=$nics{$_}";
+                    if (defined($mac) && ($mac ne ""))
+                    {
+                        $cmdline .= ",macaddr=$mac";
+                    }
+                }
+            } else {
+                print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
+                $cmdline .= " -net nic,$_";
+            }
 
-		if (($netdevs{$_} =~ /,ifname=gentap/i) || ($netdevs{$_} =~ /,gentap/i ))
-		{
-			$idnum = (rand() * 10000) % 10000;
-			$ifname = (rand() * 10000) % 10000;
-			$i = 0 + @taps;
-			$taps[$i] = "kvmtap".sprintf("%d", $ifname);
-			$idname = "qdevid".sprintf("%d", $idnum);
+            $vlanport = $vlans{$_};
+            if ($vlanport =~ /^vlan(\d)$/i)
+            {
+                $copyvlan = "vlan=$1";
+                $vlans{$_} = $vlans{$copyvlan};
+            }
+            if (($vlans{$_} =~ /,ifname=gentap/i) || ($vlans{$_} =~ /,gentap/i ))
+            {
+                $ifname = (rand() * 10000) % 10000;
+                $i = 0 + @taps;
+                $taps[$i] = "kvmtap".sprintf("%d", $ifname);
+                $vlans{$_} =~ s/,ifname=gentap/,ifname=$taps[$i]/i;
+                $vlans{$_} =~ s/,gentap/,ifname=$taps[$i]/i;
+
+                my $us = $_;
+
+                print __LINE__, ": ", (caller(0))[3], " Bridge parsing $vlans{$_}\n" if $verbose;
+
+                if ($vlans{$_} =~ /,bridge=(.*?),/i)
+                {
+                    $bridges{$taps[$i]} = $1;
+                    $vlans{$us} =~ s/,bridge=.*?,/,/i;
+                    print "  Found bridge $bridges{$taps[$i]}, modified vlan: $vlans{$us}\n" if ($verbose);
+                }
+            }
+
+            $cmdline .= " -net $vlans{$_},$_";
         }
-        
-		if ($nics{$_})
-		{
-            print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
-			if ($nics{$_} =~ /^i82.*$/)
-			{
-                print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
-				$cmdline .= " -device $nics{$_},netdev=qdeved$_";
-				$cmdline .= ",mac=$macs{$_}" if ($macs{$_});
-			}
-			elsif ($nics{$_} =~ /^usb-net$/)
-			{
-                print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
-				$cmdline .= " -device $nics{$_},$_";
-				$cmdline .= ",mac=$macs{$_}" if ($macs{$_});
-			}
-			else
-			{
-                print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
-#				$cmdline .= " -device nic,$_,model=$nics{$_}";
-                $cmdline .= " -device $nics{$_}";
-                $cmdline .= ",netdev=$idname";
-#				$cmdline .= ",macaddr=$macs{$_}" if ($macs{$_});
-				$cmdline .= ",mac=$macs{$_}" if ($macs{$_});
-			}
-		} else {
-            print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
-#			$cmdline .= " -device e1000,netdev=$idname";
-			$cmdline .= " -device virtio-net-pci,netdev=$idname";
-			$cmdline .= ",mac=$macs{$_}" if ($macs{$_});
-		}
 
-		$netdevport = $netdevs{$_};
-		if ($netdevport =~ /^netdev(\d)$/i)
-		{
-			$copynetdev = "netdev=$1";
-			$netdevs{$_} = $netdevs{$copynetdev};
-		}
-		
-		if (($netdevs{$_} =~ /,ifname=gentap/i) || ($netdevs{$_} =~ /,gentap/i ))
-		{
-			$netdevs{$_} =~ s/,ifname=gentap/,id=$idname,ifname=$taps[$i]/i;
-			$netdevs{$_} =~ s/,gentap/,id=$idname,ifname=$taps[$i]/i;
-	
-			my $us = $_;
-	
-			print __LINE__, ": ", (caller(0))[3], " Bridge parsing $netdevs{$_}\n" if $verbose;
-	
-			if ($netdevs{$_} =~ /,bridge=(.*?),/i)
-			{
-				$bridges{$taps[$i]} = $1;
-				$netdevs{$us} =~ s/,bridge=.*?,/,/i;
-				print "  Found bridge $bridges{$taps[$i]}, modified netdev: $netdevs{$us}\n" if $verbose;
-			}
-		}
-	
-		$cmdline .= " -netdev $netdevs{$_}";
-	}
-
-	print __LINE__, ": ", (caller(0))[3], " Process the NICs\n" if ($verbose);
-	foreach (keys(%nics))
-	{
- 		my $ifname;
-	
-		next if ($vlans{$_});
-	
-        if ($netdevs{$_})
+        # Generate netdevs and related device command-line elements, e.g.:
+        # -netdev tap,id=dwh1847,ifname=kvmtap1847,script=no
+        # -device virtio-net-pci,netdev=dwh1847
+        #
+        # -netdev tap,id=dwh9896,ifname=kvmtap9896,script=no
+        # -device virtio-net-pci,netdev=dwh9896
+        print __LINE__, ": ", (caller(0))[3], " Process the netdevs\n" if ($verbose);
+        foreach (sort keys(%netdevs))
         {
-#DWH            $cmdline .= " -device $nics{$_}";
-#DWH            $cmdline .= ",mac=$macs{$_}" if ($macs{$_});
-            $cmdline .= " ";
+            my $idnum;
+            my $idname;
+            my $netdevport = getNetdev($_);
+            my $copynetdev;
+            my $i;
+            my $ifname;
+            my $iftype;
+            my $mac;
+            my $devdef;
+
+    #		die "No NIC for $_\n" if (!$nics{$_});
+            print __LINE__, ": ", (caller(0))[3], " Processing NIC for netdev $_\n" if ($verbose);
+            if ($nics{$_})
+            {
+                $iftype = $nics{$_};
+            }
+            else
+            {
+                $iftype = "";
+            }
+
+            $mac = getMAC($_);
+
+            if (($netdevport =~ /,ifname=gentap/i) || ($netdevport =~ /,gentap/i ))
+            {
+                print __LINE__, ": ", (caller(0))[3], " Processing generate random tap interface and qemu net device IDs\n" if ($verbose);
+
+                $ifname = (rand() * 10000) % 10000;
+                $i = 0 + @taps;
+                $taps[$i] = "kvmtap".sprintf("%d", $ifname);
+                print __LINE__, ": ", (caller(0))[3], " * tap is:            $taps[$i]\n" if ($verbose);
+
+                $idnum = (rand() * 10000) % 10000;
+                $idname = "qdevid".sprintf("%d", $idnum);
+                $netids{$i} = $idname;
+                print __LINE__, ": ", (caller(0))[3], " * qemu device ID is: $idname\n" if ($verbose);
+
+                # If we also have a NIC for this netdev
+                if ($iftype)
+                {
+                    print __LINE__, ": ", (caller(0))[3], "  * netdev has a NIC model: $iftype\n" if ($verbose);
+                }
+            }
+            else
+            {
+                if ($nics{$_})
+                {
+                    print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
+                    if ($nics{$_} =~ /^i82.*$/)
+                    {
+                        print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
+                        $cmdline .= " -device $nics{$_},netdev=qdeved$_";
+                        if (defined($mac) && ($mac ne ""))
+                        {
+                            $cmdline .= ",mac=$mac";
+                        }
+                    }
+                    elsif ($nics{$_} =~ /^usb-net$/)
+                    {
+                        print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
+                        $cmdline .= " -device $nics{$_},$_";
+                        if (defined($mac) && ($mac ne ""))
+                        {
+                            $cmdline .= ",mac=$mac";
+                        }
+                    }
+                    elsif ($nics{$_} =~ /^virtio$/)
+                    {
+                        print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
+                        $cmdline .= " -net nic";
+                        if (defined($vlans{$_}) && ($vlans{$_} ne ""))
+                        {
+                            $cmdline .= ",$vlans{$_}";
+                        }
+                        if (defined($mac) && ($mac ne ""))
+                        {
+                            $cmdline .= ",mac=$mac";
+                        }
+                        if (defined($nics{$_}) && ($nics{$_} ne ""))
+                        {
+                            $cmdline .= ",model=$nics{$_}";
+                        }
+                    }
+                    else
+                    {
+                        print __LINE__, ": ", (caller(0))[3], "\n" if ($verbose);
+                        $cmdline .= " -device nic,$_,model=$nics{$_}";
+                        if (defined($mac) && ($mac ne ""))
+                        {
+                            $cmdline .= ",macaddr=$mac";
+                        }
+                    }
+                }
+            }
+
+            if ($netdevport =~ /^netdev(\d)$/i)
+            {
+                $copynetdev = getNetdevFromNICnum($1);
+                print __LINE__, ": ", (caller(0))[3], "  * Using:\n    $copynetdev\n    to replace\n    $netdevport\n" if ($verbose);
+                $netdevport = getNetdev($copynetdev);
+                setNetdev($_, $netdevport);
+            }
+
+            if (($netdevport =~ /,ifname=gentap/i) || ($netdevport =~ /,gentap/i ))
+            {
+                print __LINE__, ": ", (caller(0))[3], " Inserting generated tap\n" if ($verbose);
+                print __LINE__, ": ", (caller(0))[3], " * $netdevport\n" if ($verbose);
+                $netdevport =~ s/,ifname=gentap/,id=$idname,ifname=$taps[$i]/i;
+                $netdevport =~ s/,gentap/,id=$idname,ifname=$taps[$i]/i;
+                print __LINE__, ": ", (caller(0))[3], " Becomes:\n" if ($verbose);
+                print __LINE__, ": ", (caller(0))[3], " * $netdevport\n" if ($verbose);
+
+                my $us = $_;
+
+                print __LINE__, ": ", (caller(0))[3], " Bridge parsing $netdevport\n" if $verbose;
+
+                if ($netdevport =~ /,bridge=(.*?),/i)
+                {
+                    $bridges{$taps[$i]} = $1;
+                    $netdevport =~ s/,bridge=.*?,/,/i;
+                    setNetdev($us, $netdevport);
+                    print "  Found bridge $bridges{$taps[$i]}, modified netdev: $netdevport\n" if $verbose;
+                }
+            }
+
+            $cmdline .= " -netdev $netdevport";
+
+            # If there is an associated NIC type definition that's empty but there is a MAC address
+            if ((!defined($iftype) || ($iftype eq "")) && (defined($mac) && ($mac ne "")))
+            {
+                # Use the default type (2018-04-27 - virtio-net-pci)
+                $iftype = "virtio";
+            }
+            if ($iftype)
+            {
+                print __LINE__, ": ", (caller(0))[3], " Process device associated with netdev using $_\n" if ($verbose);
+                print __LINE__, ": ", (caller(0))[3], " * Interface type:  $iftype\n" if ($verbose);
+                print __LINE__, ": ", (caller(0))[3], " * QEMU device ID:  $idname\n" if ($verbose);
+                $cmdline .= " -device $iftype,netdev=$idname";
+
+                # And add any MAC address
+                if (defined($mac) && ($mac ne ""))
+                {
+                    print __LINE__, ": ", (caller(0))[3], " * MAC address: $mac\n" if ($verbose);
+                    $cmdline .= ",mac=$mac";
+                }
+            }
         }
-        else
+
+        print __LINE__, ": ", (caller(0))[3], " Process the NICs\n" if ($verbose);
+        foreach (keys(%nics))
         {
-            $cmdline .= " -net nic,$_,model=$nics{$_}";
-            $cmdline .= ",macaddr=$macs{$_}" if ($macs{$_});
+            my $mac;
+
+            if (defined($vlans{$_}) && ($vlans{$_} ne ""))
+            {
+                $mac = getMAC($_);
+                $cmdline .= " -net nic,$_,model=$nics{$_}";
+                if (defined($mac) && ($mac ne ""))
+                {
+                    $cmdline .= ",macaddr=$mac";
+                }
+            }
         }
-	}
-	
-	if ($net)
-	{
-		$cmdline .= " -net $net";
-	}
+
+        if ($net)
+        {
+            $cmdline .= " -net $net";
+        }
+    }
 	
 	print "\n" if $verbose;
 	
@@ -2089,36 +2648,16 @@ sub generateVMCommandLine
 		$cmdline .= " -usbdevice $_";
 	}
 
-	loadStartDateFile();
+	doStartDateFileOp("r");
 
 	if ($startdate)
 	{
 		$cmdline .= " -startdate $startdate";
 	}
-	
-	if ($vgatype eq "std")
+
+	if ($vgatype ne "")
 	{
-		$cmdline .= " -vga std";
-#		$cmdline .= " -device VGA";
-	}
-	elsif ($vgatype eq "vmware")
-	{
-#		$cmdline .= " -vga vmware";
-		$cmdline .= " -device vmware-svga";
-	}
-	elsif ($vgatype eq "qxl")
-	{
-		$cmdline .= " -vga qxl";
-	}
-	elsif ($vgatype eq "none")
-	{
-		$cmdline .= " -vga none";
-	}
-	else
-	{
-		# The default, but state it anyway
-		$cmdline .= " -vga cirrus";
-#		$cmdline .= " -device cirrus-vga";
+        $cmdline .= " -vga $vgatype";
 	}
 
 	foreach(@chardevs) {
@@ -2204,7 +2743,7 @@ sub generateVMCommandLine
 	}
 	else
 	{
-		$cmdline .= " -enable-kvm";
+		$cmdline .= " -accel kvm -enable-kvm";
 	}
 	
 	if ($nostart)
@@ -2228,9 +2767,7 @@ sub generateVMCommandLine
 	
 	$cmdline .= " $options" if ($options);
 	
-	print "Command line = $cmdline\n" if ($verbose);
-	
-	print "\n\n" if ($verbose);
+	vbMessage("Command line = $cmdline\n");
 
 	foreach (@taps)
 	{
@@ -2316,158 +2853,44 @@ sub listVMs
 }
 
 
-sub loadStartDateFile
-{
-	if ($startdatefile)
-	{
-		if (open($sdfile, "<", $startdatefile))
-		{
-			while (defined($sdfile) && ($startdate = <$sdfile>) && ($startdate =~ /^#(.*)/))
-			{
-			}
-			close($sdfile);
-			print "Using start date from file: $startdate\n" if ($verbose);
-		}
-	
-		if (!$startdate || ($startdate eq ""))
-		{
-			if ($localtime)
-			{
-				$dt = DateTime->now( time_zone => "local" );
-			}
-			else
-			{
-				$dt = DateTime->now();
-			}
-	
-			$startdate = "$dt";
-			print "Using now as start date: $startdate\n" if ($verbose);
-		}
-	
-		if ($startdate =~ /^(\d{4})-(\d{2})-(\d{2})/)
-		{
-			$sy = $1;
-			$sm = $2;
-			$sd = $3;
-		}
-		if ($startdate =~ /^\d+-\d+-\d+T(\d{2})/)
-		{
-			$shr = $1;
-		}
-		if ($startdate =~ /^\d+-\d+-\d+T\d{2}:(\d{2})/)
-		{
-			$smn = $1;
-		}
-		if ($startdate =~ /^\d+-\d+-\d+T\d{2}:\d{2}:(\d{2})/)
-		{
-			$ssc = $1;
-		}
-	
-		$sdt = new DateTime(	year	=> $sy,
-					month	=> $sm,
-					day	=> $sd,
-					hour	=> $shr,
-					minute	=> $smn,
-					second	=> $ssc );
-	
-		print "Selected startdate: $sdt\n" if ($verbose);
-		$starttime = DateTime->now();
-		print "Starting VM at $starttime\n" if ($verbose);
-	}
-}
-
-
-sub saveStartDateFile
-{
-	if ($startdatefile && !$daemonize)
-	{
-		if  (!$snapshot)
-		{
-			$vmelapsed = DateTime->now() - $starttime;
-			print "VM Elapsed runtime: $vmelapsed\n" if ($verbose);
-			$vmelapsed->add(seconds => 15);
-			print "VM padded runtime: $vmelapsed\n" if ($verbose);
-		
-			$sdt->add($vmelapsed);
-		
-			print "Next start time: $sdt\n" if ($verbose);
-		
-			$startdate = "$sdt";
-			print "Next start time value: $startdate\n" if ($verbose);
-		
-			if (open($sdfile, ">", $startdatefile))
-			{
-				print "Writing start date to file: $startdate\n" if ($verbose);
-				print $sdfile "$startdate";
-				close($sdfile);
-			}
-		}
-		else
-		{
-			print "Snapshot used, not updating startdate file\n";
-		}
-	}
-}
-
-
+#
+# Setup a list of the supplied basic drives and filenames, using a prefix directory if supplied
+#
 sub generateVMDirDiskPaths
 {
-	# Ensure vmdir ends in a slash
-	if (!($vmdir =~ /\/$/))
+    my $fullPath;
+
+    print __LINE__, ": ", (caller(0))[3], " generateVMDirDiskPaths\n" if ($verbose);
+
+	# Ensure a non-empty vmdir ends in a slash
+	if (defined($vmdir))
 	{
-		$vmdir .= "/";
+        if ((length($vmdir) != 0) &&  !($vmdir =~ /\/$/))
+        {
+            $vmdir .= "/";
+        }
 	}
+	else
+	{
+        # An empty vmdir assumes any disk file is fully qualified
+        $vmdir = "";
+	}
+
+	print __LINE__, ": ", (caller(0))[3], " VM Dir is: $vmdir\n" if ($debug);
 
 	# Insert the vmdir path before each disk path/filename
-
-	if ($fda)
-	{
-		$fda = $vmdir.$fda;
-	}
-	if ($fdb)
-	{
-		$fdb = $vmdir.$fdb;
-	}
-	if ($hda)
-	{
-		$hda = $vmdir.$hda;
-	}
-	if ($hdb)
-	{
-		$hdb = $vmdir.$hdb;
-	}
-	if ($hdc)
-	{
-		$hdc = $vmdir.$hdc;
-	}
-	if ($hdd)
-	{
-		$hdd = $vmdir.$hdd;
-	}
-	if ($sda)
-	{
-		$sda = $vmdir.$sda;
-	}
-	if ($sdb)
-	{
-		$sdb = $vmdir.$sdb;
-	}
-	if ($sdc)
-	{
-		$sdc = $vmdir.$sdc;
-	}
-	if ($sdd)
-	{
-		$sdd = $vmdir.$sdd;
-	}
-	if ($sdi)
-	{
-		$sdi = $vmdir.$sdi;
-	}
-	if ($cdrom)
-	{
-		$cdrom = $vmdir.$cdrom;
-	}
+	setVMDirDiskPath("fda", $fda);
+	setVMDirDiskPath("fdb", $fdb);
+	setVMDirDiskPath("hda", $hda);
+	setVMDirDiskPath("hdb", $hdb);
+	setVMDirDiskPath("hdc", $hdc);
+	setVMDirDiskPath("hdd", $hdd);
+	setVMDirDiskPath("sda", $sda);
+	setVMDirDiskPath("sdb", $sdb);
+	setVMDirDiskPath("sdc", $sdc);
+	setVMDirDiskPath("sdd", $sdd);
+	setVMDirDiskPath("sdi", $sdi);
+	setVMDirDiskPath("cdrom", $cdrom);
 }
 
 
@@ -2665,6 +3088,9 @@ if ($remainingArgs)
 	}
 }
 
+# Validate the graphics card or use the default
+$vgatype = getVMGraphicsCard();
+
 if ($createVM)
 {
 	createNewVM();
@@ -2691,10 +3117,7 @@ if ($subname)
 die "When you select a sub-section it must exist: $subname\n" if ($subname && ($insub < 2));
 die "hdc and cdrom are mutually exclusive\n" if ($hdc && $cdrom);
 
-if ($vmdir)
-{
-	generateVMDirDiskPaths();
-}
+generateVMDirDiskPaths();
 
 if ($verbose || $dump)
 {
@@ -2723,7 +3146,6 @@ elsif (!$dump)
 	print "Test mode, not starting VM\n";
 }
 
-
 if (!$dump)
 {
 	foreach (@taps)
@@ -2740,7 +3162,7 @@ if (!$dump)
 		{
 			print "Private bridge for $_\n";
 		}
-	
+
 		# Switch to ip (2017-10-26)
 #		print $sudobins{'sudo'}." ".$sudobins{'ifconfig'}." $_ down\n" if ($verbose);
 #		system($sudobins{'sudo'}." ".$sudobins{'ifconfig'}." $_ down") if (!$test && !$daemonize);
@@ -2754,7 +3176,7 @@ if (!$dump)
         {
             system($sudobins{'sudo'}." ".$sudobins{'ip'}." addr del 0.0.0.0/32 dev $_") if (!$test && !$daemonize);
         }
-	
+
 		print("\nsystem: ".$sudobins{'sudo'}." ".$sudobins{'tunctl'}." -d $_\n") if ($verbose || $pretendExec);
         if (!$pretendExec)
         {
@@ -2762,7 +3184,7 @@ if (!$dump)
 		}
 	}
 
-	saveStartDateFile();
+	doStartDateFileOp("w");
 }
 
 print "\n\n";
