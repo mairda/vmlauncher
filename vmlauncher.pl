@@ -271,7 +271,7 @@ sub getGlobalOptions
     # Make sure it is treated as a directory entry name
     if (($vmcfgdir =~ m/\/$/))
     {
-        $vmcfgdir =~ s/(.+)\/$/$1/;
+        $vmcfgdir = s/(.+)\/$/$1/;
     }
 
     # And replace ~ with ENV{HOME}
