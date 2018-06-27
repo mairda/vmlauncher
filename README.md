@@ -29,4 +29,8 @@ Assuming the file is in the user's .vmlauncher directory and named SimplePC plus
 
 vmlauncher.pl vm=SimplepPC
 
-The qemu runtime window will have in the title: "Simple PC"
+instead of the qemu command-line:
+
+qemu -smp 1 -m size=1024M -hda /home/user/mySimplePCdisk.qcow2 -cdrom /home/user/myLinuxRescueCD.iso -name="Simple PC"
+
+The qemu runtime window will have in the title: "Simple PC". Once there are network interfaces and when there are more drives then it will require multiple setup and tear-down command-lines (for the network) and the qemu command-line will be hundreds of characters long, whereas vmlauncher will always be a command-line with two short parts (the program name and the vm=<value> argument to identify the configuration file to use).

@@ -229,6 +229,81 @@ sub vbMessage
 }
 
 
+# Get global options that allow things like location of VM config files to be
+# user chosen. Requires a file called .vmlauncher.cfg in home directory. File
+# format is option=setting where the currently available options are:
+#
+# vmconfigsdir=<path containing VM config files>
+#
+sub getGlobalOptions
+{
+    my $vmGlobalCfg;
+    my $vmGlobalCfgFile;
+    my $ln;
+
+    $vmGlobalCfgFile = $ENV{HOME}."/.vmlauncher.cfg";
+
+    # Try to open the constructed path
+    if (open($vmGlobalCfg, "<", $vmGlobalCfgFile))
+    {
+        dbTrace(__LINE__, (caller(0))[3], "DWH: Found  Global Config File");
+        while (<$vmGlobalCfg>)
+        {
+            dbTrace(__LINE__, (caller(0))[3], "DWH: Parsing Global Config Item: $_");
+            if ($_ =~ /^--/)
+            {
+                $ln = $_;
+            }
+            else
+            {
+                $ln = "--".$_;
+            }
+            ($ret, $remainder) = GetOptionsFromString($ln,
+                                            'vmconfigsdir=s' => \$vmcfgdir);
+        }
+    }
+    else
+    {
+        # Can't open a global config file, assume default VM config file directory
+        $vmcfgdir = $ENV{HOME}."/.vmlauncher";
+    }
+
+    # Make sure it is treated as a directory entry name
+    if (($vmcfgdir =~ m/\/$/))
+    {
+        $vmcfgdir = s/(.+)\/$/$1/;
+    }
+
+    # And replace ~ with ENV{HOME}
+    $vmcfgdir =~ s/\~/$ENV{HOME}/;
+
+    dbTrace(__LINE__, (caller(0))[3], "DWH: Using VM Config Directory: $vmcfgdir");
+}
+
+
+# Given a string compose and return a string that has the argument appended to
+# the current config file sirectory name
+sub getConfigDirFileName
+{
+    my $cfgFileName = "";
+
+    if (defined($_[0]))
+    {
+        if (length($vmcfgdir) > 0)
+        {
+            $cfgFileName = $vmcfgdir."/";
+        }
+        $cfgFileName .= $_[0];
+    }
+    else
+    {
+        die "Attempt to create a config filename using the config directory but no file\n";
+    }
+
+    return $cfgFileName;
+}
+
+
 # Find the paths to the executables for the external programs to be used
 sub findBinaries
 {
@@ -724,7 +799,7 @@ sub getVMGraphicsCardName
 	{
 		$vgaName = "None";
 	}
-	elseif ($vgatype eq "cirrus")
+	elsif ($vgatype eq "cirrus")
 	{
 		print "Cirrus\n";
 	}
@@ -1102,19 +1177,6 @@ sub parseConfigItem
 }
 
 
-# Generate the default directory path we expect config files in
-sub getConfigDir
-{
-	my $cfgdir;
-
-	# Extract the generic base directory for VM configs from the environment
-	$cfgdir = $ENV{HOME}."/.vmlauncher/";
-	dbTrace(__LINE__, (caller(0))[3], " finds $cfgdir");
-
-	return $cfgdir;
-}
-
-
 # If we used --vm=<config file> and have an expected config file then generate
 # the complete path we expect for it
 sub getConfigFileName
@@ -1124,8 +1186,7 @@ sub getConfigFileName
 	# If a VM name is set, add it to the config directory name
 	if (length($vmname) > 0)
 	{
-		$cfgFileName = getConfigDir();
-		$cfgFileName .= $vmname;
+		$cfgFileName = getConfigDirFileName($vmname);
 	}
 
 	return $cfgFileName;
@@ -1339,8 +1400,7 @@ sub createNewVM
 	print "Creating a new Virtual Machine\n" if ($verbose);
 
 	# Set the config directory and config filename
-	$vmcfgdir = getConfigDir();	#$ENV{HOME}."/.vmlauncher/";
-	$vmcfgfile = getConfigFileName();	#$vmcfgdir.$vmname;
+	$vmcfgfile = getConfigFileName();
 
 	# Try to open the constructed path
 	open($vmcfg, ">", $vmcfgfile) or die "Failed to create config file\n";
@@ -1425,10 +1485,10 @@ sub createNewVM
 		print $vmcfg "hack\n";
 	}
 	doVMDevOp("write", "HDD", $vmcfg);
-	if ($cdrom)
-	{
-		print $vmcfg "cdrom=$cdrom\n";
-	}
+    if ($cdrom)
+    {
+        print $vmcfg "cdrom=$cdrom\n";
+    }
 
     printf "Process the drives: createNewVM\n" if ($verbose);
 	foreach (sort keys(%drives))
@@ -1777,8 +1837,7 @@ sub createNewVM
 sub editVMConfig
 {
 	# Set the config directory and config filename
-	$vmcfgdir = getConfigDir();	#$ENV{HOME}."/.vmlauncher/";
-	$vmcfgfile = getConfigFileName();	#$vmcfgdir.$vmname;
+    $vmcfgfile = getConfigFileName();
 
 	(-e $vmcfgfile) or die("No such VM\n");
 	(-r $vmcfgfile) or die("Unreadable configuration file\n");
@@ -2819,25 +2878,28 @@ sub listVMs
 	my $i;
 	my $l;
 	my $vmdir;
+	my $hdir;
 	my $vmfile;
+	my $vmfname;
 	my @lt;
 	my $yr;
 	my $st;
 	my @vms;
 
 	# List the files in the generic base directory for VM configs
-	$vmdir = getConfigDir();
-	#$ENV{HOME}."/.vmlauncher/";
-	opendir(DIR, $vmdir);
-	@vms = readdir(DIR);
-	closedir(DIR);
+    $vmdir = $vmcfgdir;
+    dbTrace(__LINE__, (caller(0))[3], "Listing VM Config Directory: $vmdir");
+    opendir($hdir, $vmdir) || die "Failed to open VM Config Directory to list VMs: $vmdir";
+    @vms = readdir($hdir);
+    closedir($hdir);
 
 	# Print the names
 	foreach $vmfile (@vms)
 	{
 		if (! ($vmfile =~ '^\.') && ($vmfile ne '..') && ! ($vmfile =~ /~$/))
 		{
-			$st = stat($vmdir.$vmfile);
+            $vmfname = getConfigDirFileName($vmfile);
+            $st = stat($vmfname);
 
 			if ($verbose) {
 				@lt = localtime($st->atime);
@@ -2897,6 +2959,7 @@ sub generateVMDirDiskPaths
 # Program entry point
 print "\nKVM/QEMU Virtual Machine Launcher (version $ver)\n\n";
 
+getGlobalOptions();
 findBinaries();
 
 $acval = 0 + @ARGV;
@@ -2973,8 +3036,6 @@ elsif ($vmsource ne "")
 	$vmcfgfile = $vmsource;
 }
 
-$vmcfgdir = "";
-
 # BUG: This will over-ride the whole conditional above
 $vmcfgfile = $vmname;
 
@@ -2984,18 +3045,15 @@ if (!$createVM)
 	$configFound = 1;
 	if (!open($vmcfg, "<", $vmcfgfile))
 	{
-        print __LINE__, ": Config filename is not fully qualified, trying with config dir\n" if ($debug);
-		# Extract the generic base directory for VM configs from the environment
-		$vmcfgdir = getConfigDir();
-		#$ENV{HOME}."/.vmlauncher/";
-	
 		# Add the config name
-		$vmcfgfile = $vmcfgdir.$vmname;
+        print __LINE__, ": Config filename is not fully qualified, trying with config dir\n" if ($debug);
+		$vmcfgfile = getConfigDirFileName($vmname);
 	
 		# Try to open the constructed path
 		if (!open($vmcfg, "<", $vmcfgfile))
 		{
-			$configFound = 0;
+            print __LINE__, ": Named config file not found using config dir\n" if ($debug);
+            $configFound = 0;
 		}
 		
 		# Yuk, look for verbose here so that we can re-parse with it on
@@ -3088,8 +3146,11 @@ if ($remainingArgs)
 	}
 }
 
-# Validate the graphics card or use the default
-$vgatype = getVMGraphicsCard();
+if ($createVM || $configFound)
+{
+    # Validate the graphics card or use the default
+    $vgatype = getVMGraphicsCard();
+}
 
 if ($createVM)
 {
@@ -3097,9 +3158,9 @@ if ($createVM)
 	exit 0;
 }
 
-if ($verbose)
+if ($configFound && $verbose)
 {
-	print "\nStart a KVM virtual machine\n\n";
+    print "\nStart a KVM virtual machine\n\n";
 }
 
 print "\n\n" if ($verbose);
