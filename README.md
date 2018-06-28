@@ -34,3 +34,15 @@ instead of the qemu command-line:
 qemu -smp 1 -m size=1024M -hda /home/user/mySimplePCdisk.qcow2 -cdrom /home/user/myLinuxRescueCD.iso -name="Simple PC"
 
 The qemu runtime window will have in the title: "Simple PC". Once there are network interfaces and when there are more drives then it will require multiple setup and tear-down command-lines (for the network) and the qemu command-line will be hundreds of characters long, whereas vmlauncher will always be a command-line with two short parts (the program name and the vm=<value> argument to identify the configuration file to use).
+
+GLOBAL SETTINGS
+
+The location where vmlauncher configuration files are looked for can be set using the file .vmlauncher.cfg in the user's home directory. The option vmconfigsdir can specify the directory to be used:
+
+vmconfigsdir=path-to-vm-configuration-files-directory
+
+e.g.:
+
+vmconfigsdir=~/.my-vms/
+
+Where ~ indicates the user's home directory. The value doesn't have to end in a slash. When there is no .vmlauncher.cfg file or the vmconfifsdir is not set in it then the default location of a .vmlauncher directory in the user's home directory is used.
