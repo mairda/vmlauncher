@@ -45,4 +45,4 @@ e.g.:
 
 vmconfigsdir=~/.my-vms/
 
-Where ~ indicates the user's home directory. The value doesn't have to end in a slash. When there is no .vmlauncher.cfg file or the vmconfifsdir is not set in it then the default location of a .vmlauncher directory in the user's home directory is used.
+Where ~ indicates the user's home directory. The value doesn't have to end in a slash. When there is no .vmlauncher.cfg file or the vmconfigsdir is not set in it then the default location of a .vmlauncher directory in the user's home directory is used.
