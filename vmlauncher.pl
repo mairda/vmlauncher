@@ -246,10 +246,10 @@ sub getGlobalOptions
     # Try to open the constructed path
     if (open($vmGlobalCfg, "<", $vmGlobalCfgFile))
     {
-        dbTrace(__LINE__, (caller(0))[3], "DWH: Found  Global Config File");
+        dbTrace(__LINE__, (caller(0))[3], "Found  Global Config File");
         while (<$vmGlobalCfg>)
         {
-            dbTrace(__LINE__, (caller(0))[3], "DWH: Parsing Global Config Item: $_");
+            dbTrace(__LINE__, (caller(0))[3], "Parsing Global Config Item: $_");
             if ($_ =~ /^--/)
             {
                 $ln = $_;
@@ -277,7 +277,7 @@ sub getGlobalOptions
     # And replace ~ with ENV{HOME}
     $vmcfgdir =~ s/\~/$ENV{HOME}/;
 
-    dbTrace(__LINE__, (caller(0))[3], "DWH: Using VM Config Directory: $vmcfgdir");
+    dbTrace(__LINE__, (caller(0))[3], "Using VM Config Directory: $vmcfgdir");
 }
 
 
