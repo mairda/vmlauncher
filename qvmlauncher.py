@@ -202,7 +202,18 @@ class VMDialog(QDialog):
     nics = ['', '', '', '', '', '', '', '', '', '']
     macs = ['', '', '', '', '', '', '', '', '', '']
     vlans = ['', '', '', '', '', '', '', '', '', '']
-  
+
+    minFDD = 'A'
+    maxFDD = 'B'
+    minIDEHD = 'A'
+    maxIDEHD = 'D'
+    minSCSIHD = 'A'
+    maxSCSIHD = 'D'
+    extraSCSIHDs = ['I']
+    minNICID = 0
+    maxNICID = 9
+    nicModels = ['NE2000 PCI', 'i82551', 'i82557b', 'i82559er', 'RTL8139', 'e1000', 'PC-NET', 'Virt I/O']
+
     def calcMinTabBoxWidth(self):
         # Work through a line of material on the system tab
         myUI = self.ui
@@ -901,16 +912,8 @@ class VMDialog(QDialog):
         if DBG > 0:
             print("Completed re-click event for button " + str(self.storageReclicker.btnSource))
 
-    def __init__(self):
-        if DBG > 0:
-            print('QT VM Launcher: VM directory is ' + VMDIR)
-
-        QDialog.__init__(self)
-        
-        # Setup the designer UI
-        self.ui = Ui_vm_dlg()
-        self.ui.setupUi(self)
-        
+    # PC Model list
+    def initMachineList(self):
         self.ui.machine.addItem('PC 1.0')
         self.ui.machine.addItem('PC 0.14')
         self.ui.machine.addItem('PC 0.13')
@@ -918,14 +921,18 @@ class VMDialog(QDialog):
         self.ui.machine.addItem('PC 0.11')
         self.ui.machine.addItem('PC 0.10')
         self.ui.machine.addItem('ISA PC')
-        
+
+    # VGA controller list
+    def initVGAList(self):
         self.ui.vgaModel.addItem('Standard')
         self.ui.vgaModel.addItem('Cirrus')
         self.ui.vgaModel.addItem('VMWare')
         self.ui.vgaModel.addItem('QXL')
         self.ui.vgaModel.addItem('XenFB')
         self.ui.vgaModel.addItem('None')
-        
+
+    # CPU model list
+    def initCPUModelList(self):
         self.ui.cpuModel.addItem('host')
         self.ui.cpuModel.addItem('Opteron G3')
         self.ui.cpuModel.addItem('Opteron G2')
@@ -946,41 +953,73 @@ class VMDialog(QDialog):
         self.ui.cpuModel.addItem('qemu64')
         self.ui.cpuModel.addItem('Core2 Duo')
         self.ui.cpuModel.addItem('phenom')
-        
-        self.ui.acpi.setChecked(self.acpi)
-        self.ui.hpet.setChecked(self.hpet)
-        
+
+    # Sound card list
+    def initSoundCardList(self):
         self.ui.soundCard.addItem('PC Speaker')
         self.ui.soundCard.addItem('Soundblaster 16')
         self.ui.soundCard.addItem('Intel AC97')
         self.ui.soundCard.addItem('Ensoniq ES1370')
         self.ui.soundCard.addItem('Intel HDA')
-        
-        self.ui.fdd.addItem('A')
-        self.ui.fdd.addItem('B')
-        
-        self.ui.ide.addItem('A')
-        self.ui.ide.addItem('B')
-        self.ui.ide.addItem('C')
-        self.ui.ide.addItem('D')
-        
-        self.ui.scsi.addItem('A')
-        self.ui.scsi.addItem('B')
-        self.ui.scsi.addItem('C')
-        self.ui.scsi.addItem('D')
-        self.ui.scsi.addItem('I')
-        
-        for nic in range(0, 10, 1):
+
+    # Floppy disk drive list
+    def initFDDList(self):
+        for fddID in range(ord(self.minFDD), ord(self.maxFDD) + 1, 1):
+            self.ui.fdd.addItem(chr(fddID))
+
+    # IDE HDD list
+    def initIDEList(self):
+        for ideID in range(ord(self.minIDEHD), ord(self.maxIDEHD) + 1, 1):
+            self.ui.ide.addItem(chr(ideID))
+
+    # SCSI HDD list
+    def initSCSIList(self):
+        for scsiID in range(ord(self.minSCSIHD), ord(self.maxSCSIHD) + 1, 1):
+            self.ui.scsi.addItem(chr(scsiID))
+
+        for scsiDisk in self.extraSCSIHDs:
+            self.ui.scsi.addItem(scsiDisk)
+
+    def initNICIDList(self):
+        for nic in range(self.minNICID, self.maxNICID + 1, 1):
             self.ui.nic.addItem(str(nic))
-        
-        for nicModel in ['NE2000 PCI', 'i82551', 'i82557b', 'i82559er', 'RTL8139', 'e1000', 'PC-NET', 'Virt I/O']:
+
+    def initNICModelList(self):
+        for nicModel in self.nicModels:
             self.ui.nicModel.addItem(nicModel)
-        
+
+    def __init__(self):
+        if DBG > 0:
+            print('QT VM Launcher: VM directory is ' + VMDIR)
+
+        QDialog.__init__(self)
+
+        # Setup the designer UI
+        self.ui = Ui_vm_dlg()
+        self.ui.setupUi(self)
+
+        self.initMachineList()
+        self.initVGAList()
+        self.initCPUModelList()
+
+        self.ui.acpi.setChecked(self.acpi)
+        self.ui.hpet.setChecked(self.hpet)
+
+        self.initSoundCardList()
+
+        self.initFDDList()
+        self.initIDEList()
+        self.initSCSIList()
+
+        self.initNICIDList()
+        self.initNICModelList()
+
         if DBG == 0:
             self.ui.vmSettings.setCurrentIndex(0)
         
         self.populateVMList()
 
+        # Connect events to slots
         self.ui.btnGenUUID.clicked.connect(self.generateUUID)
         self.ui.btnFloppy.clicked.connect(self.PickFloppy)
         self.ui.btnOpticalDisk.clicked.connect(self.PickCD)
