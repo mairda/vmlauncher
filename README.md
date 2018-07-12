@@ -46,3 +46,24 @@ e.g.:
 vmconfigsdir=~/.my-vms/
 
 Where ~ indicates the user's home directory. The value doesn't have to end in a slash. When there is no .vmlauncher.cfg file or the vmconfigsdir is not set in it then the default location of a .vmlauncher directory in the user's home directory is used.
+
+GUI VERSION
+
+The GUI version of vmlauncher (qvmlauncher.py) is a Python based Qt application that can be run to perform the functions of vmlauncher.pl on a graphical desktop. It does not yet have all the features of vmlauncher.pl but that is the goal. It consists of two parts:
+
+qvmlauncher.py - The application, run by exec/launching it by filename
+pyqt/vmdlg.ui - A Qt Designer user interface model in XML for the view created by qvmlauncher.py
+
+The pyqt/vwdlg.ui file must be converted to Qt classes in Python using the pyuic tool from the Python package:
+
+pyuic pyqt/vmdlg.ui > ui_vm_dlg.py
+
+The output name, ui_vm_dlg.py is the reference in the qvmlauncher.py source:
+
+from ui_vm_dlg import Ui_vm_dlg
+
+The ui_vm_dlg.py version should be stored in the "path", it can be modified with the the following statement in the qvmlauncher.py source:
+
+sys.path.append('<path where ui_vm_dlg.py file was output to>')
+
+At present this is not a global state but it will be added as a feature to .vmlauncher.cfg to avoid setting it in the source when needed.
