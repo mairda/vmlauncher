@@ -13,7 +13,7 @@ VMDIR = os.getenv('HOME') + '/.vmlauncher'
 UIFILELOC="~/bin/"
 
 from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import QApplication, QDialog, QFileDialog, QMenu, QMessageBox
 
 
@@ -171,6 +171,7 @@ class VMDialog(QDialog):
     defaultWidgetGap = 5
     defaultBuddyGap = 2
 
+    saveOn = False
     fnm = ''
     machine = ''
     vmName = ''
@@ -318,7 +319,8 @@ class VMDialog(QDialog):
         minY += myUI.lblSettings.height()
         minY += self.defaultWidgetGap
 
-        minY += myUI.buttonBox.height()
+        #minY += myUI.buttonBox.height()
+        minY += myUI.buttonFrame.height()
         minY += self.defaultWidgetGap
 
         minY += self.calcMinTabBoxHeight()
@@ -354,102 +356,213 @@ class VMDialog(QDialog):
         if not os.path.exists(self.fnm):
             return
 
-        f = open(self.fnm, 'r')
-        self.machine = self.defaultMachine
-        self.cpuModel = self.defaultCPU
-        self.utcClock = self.defaultClock
-        self.vga = self.defaultVGA
-        self.curses = self.defaultCurses
-        self.acpi = self.defaultACPI
-        self.hpet = self.defaultHPET
-        self.sound = self.defaultSound
-        self.uuid = self.defaultUUID
-        self.fda = ''
-        self.fdb = ''
-        self.hda = ''
-        self.hdb = ''
-        self.hdc = ''
-        self.hdd = ''
-        self.sda = ''
-        self.sdb = ''
-        self.sdc = ''
-        self.sdd = ''
-        self.sdi = ''
-        self.cdrom = ''
-        
-        for line in f:
-            line = line.strip('\n')
-            if DBG > 1:
-                print(line)
-            if line.startswith('#'):
-                continue
-            if line.find('noacpi') == 0:
-                self.acpi = False
-            if line.startswith('cdrom='):
-                self.cdrom = line[6:]
-            if line.startswith('cpu='):
-                self.cpuModel = line[4:]
-            if line.startswith('cpus='):
-                self.cpus = line[5:]
-            if line.find('curses') == 0:
-                self.curses = True
-            if line.startswith('fda='):
-                self.fda = line[4:]
-            if line.startswith('fdb='):
-                self.fdb = line[4:]
-            if line.startswith('hda='):
-                self.hda = line[4:]
-            if line.startswith('hdb='):
-                self.hdb = line[4:]
-            if line.startswith('hdc='):
-                self.hdc = line[4:]
-            if line.startswith('hdd='):
-                self.hdd = line[4:]
-            if line.find('nohpet') == 0:
-                self.hpet = False
-            if line.find('localtime') == 0:
-                self.utcClock = False
-            if line.startswith('mac') and line[4:5] == '=':
-                nicNum = eval(line[3:4])
-                self.macs[nicNum] = line[5:]
-            if line.startswith('machine='):
-                self.machine = line[8:]
-            if line.startswith('mem='):
-                self.mem = line[4:]
-            if line.startswith('name='):
-                self.vmName = line[5:]
-            if line.startswith('nic') and line[4:5] == '=':
-                nicNum = eval(line[3:4])
-                self.nics[nicNum] = line[5:]
-            if line.find('nousb') == 0:
-                self.usb = False
-            if line.startswith('sda='):
-                self.sda = line[4:]
-            if line.startswith('sdb='):
-                self.sdb = line[4:]
-            if line.startswith('sdc='):
-                self.sdc = line[4:]
-            if line.startswith('sdd='):
-                self.sdd = line[4:]
-            if line.startswith('sdi='):
-                self.sdi = line[4:]
-            if line.startswith('smp='):
-                self.cpus = line[4:]
-            if line.startswith('soundhw='):
-                self.sound = line[8:]
-            if line.find('usb') == 0:
-                self.usb = True
-            if line.startswith('uuid='):
-                self.uuid = line[5:]
-            if line.startswith('vga='):
-                self.vga = line[4:]
-            if line.startswith('vlan') and line[5:6] == '=':
-                nicNum = eval(line[4:5])
-                self.vlans[nicNum] = line[6:]
+        with open(self.fnm, 'r') as f:
+            self.machine = self.defaultMachine
+            self.cpuModel = self.defaultCPU
+            self.utcClock = self.defaultClock
+            self.vga = self.defaultVGA
+            self.curses = self.defaultCurses
+            self.acpi = self.defaultACPI
+            self.hpet = self.defaultHPET
+            self.sound = self.defaultSound
+            self.uuid = self.defaultUUID
+            self.fda = ''
+            self.fdb = ''
+            self.hda = ''
+            self.hdb = ''
+            self.hdc = ''
+            self.hdd = ''
+            self.sda = ''
+            self.sdb = ''
+            self.sdc = ''
+            self.sdd = ''
+            self.sdi = ''
+            self.cdrom = ''
+            
+            for line in f:
+                line = line.strip('\n')
+                if DBG > 1:
+                    print(line)
+                if line.startswith('#'):
+                    continue
+                if line.find('noacpi') == 0:
+                    self.acpi = False
+                if line.startswith('cdrom='):
+                    self.cdrom = line[6:]
+                if line.startswith('cpu='):
+                    self.cpuModel = line[4:]
+                if line.startswith('cpus='):
+                    self.cpus = line[5:]
+                if line.find('curses') == 0:
+                    self.curses = True
+                if line.startswith('fda='):
+                    self.fda = line[4:]
+                if line.startswith('fdb='):
+                    self.fdb = line[4:]
+                if line.startswith('hda='):
+                    self.hda = line[4:]
+                if line.startswith('hdb='):
+                    self.hdb = line[4:]
+                if line.startswith('hdc='):
+                    self.hdc = line[4:]
+                if line.startswith('hdd='):
+                    self.hdd = line[4:]
+                if line.find('nohpet') == 0:
+                    self.hpet = False
+                if line.find('localtime') == 0:
+                    self.utcClock = False
+                if line.startswith('mac') and line[4:5] == '=':
+                    nicNum = eval(line[3:4])
+                    self.macs[nicNum] = line[5:]
+                if line.startswith('machine='):
+                    self.machine = line[8:]
+                if line.startswith('mem='):
+                    self.mem = line[4:]
+                if line.startswith('name='):
+                    self.vmName = line[5:]
+                if line.startswith('nic') and line[4:5] == '=':
+                    nicNum = eval(line[3:4])
+                    self.nics[nicNum] = line[5:]
+                if line.find('nousb') == 0:
+                    self.usb = False
+                if line.startswith('sda='):
+                    self.sda = line[4:]
+                if line.startswith('sdb='):
+                    self.sdb = line[4:]
+                if line.startswith('sdc='):
+                    self.sdc = line[4:]
+                if line.startswith('sdd='):
+                    self.sdd = line[4:]
+                if line.startswith('sdi='):
+                    self.sdi = line[4:]
+                if line.startswith('smp='):
+                    self.cpus = line[4:]
+                if line.startswith('soundhw='):
+                    self.sound = line[8:]
+                if line.find('usb') == 0:
+                    self.usb = True
+                if line.startswith('uuid='):
+                    self.uuid = line[5:]
+                if line.startswith('vga='):
+                    self.vga = line[4:]
+                if line.startswith('vlan') and line[5:6] == '=':
+                    nicNum = eval(line[4:5])
+                    self.vlans[nicNum] = line[6:]
+                self.enableSaveButton(False)
+
+            f.close()
 
         if DBG > 1:
             print('<<<<<<<<<<<<<<<< Finished loading VM settings')
-        
+
+    @pyqtSlot(bool)
+    def saveClicked(self, checked):
+        self.saveVMSettings()
+
+    def saveVMSettings(self):
+        #"""Load the VM configuration from the selected file"""
+        if DBG > 0:
+            print('>>>>>>>>>>>>>>>> Saving VM settings for ' + self.fnm)
+
+        self.fnm = self.ui.vmFileName.text()
+        if self.fnm != "":
+            self.ui.vmFileName.setFocus(True)
+
+            with open(self.fnm, 'w') as f:
+                self.vmName = self.ui.vmName.text()
+                if len(self.vmName) > 0:
+                    f.write('name=' + self.vmName + '\n')
+
+                self.machine = self.getQEMUMachine()
+                if self.machine != self.defaultMachine:
+                    f.write('machine=' + self.machine + '\n')
+
+                self.cpuModel = self.getQEMUCPUModel()
+                if self.machine != self.defaultMachine:
+                    f.write('cpu=' + self.machine + '\n')
+
+                self.cpus = self.ui.cpuCount.value()
+                f.write('cpus=' + str(self.cpus) + '\n')
+
+                self.mem = self.ui.memMB.value()
+                f.write('mem=' + str(self.mem) + '\n')
+
+                if (not self.ui.utcClock.isChecked()) and (self.ui.localClock.isChecked()):
+                    f.write('localtime\n')
+
+                self.vga = self.getQEMUVGA()
+                if self.vga != self.defaultVGA:
+                    f.write('vga=' + self.vga + '\n')
+
+                if not self.ui.acpi.isChecked():
+                    f.write('noacpi\n')
+
+                if not self.ui.hpet.isChecked():
+                    f.write('nohpet\n')
+
+                self.sound = self.getQEMUSound()
+                if self.sound != self.defaultSound:
+                    f.write('soundhw=' + self.sound + '\n')
+
+                if self.ui.usb.isChecked():
+                    f.write('usb\n')
+                else:
+                    f.write('nousb\n')
+
+                self.uuid = self.ui.uuid.text()
+                if len(self.uuid) == 36:
+                    f.write('uuid=' + self.uuid + '\n')
+
+                if len(self.fda) > 0:
+                    f.write('fda=' + self.fda + '\n')
+                if len(self.fdb) > 0:
+                    f.write('fdb=' + self.fda + '\n')
+
+                if len(self.hda) > 0:
+                    f.write('hda=' + self.hda + '\n')
+                if len(self.hdb) > 0:
+                    f.write('hdb=' + self.hdb + '\n')
+                if (len(self.cdrom) == 0) and (len(self.hdc) > 0):
+                    f.write('hdc=' + self.hdc + '\n')
+                elif len(self.cdrom) > 0:
+                    f.write('cdrom=' + self.cdrom + '\n')
+                if len(self.hdd) > 0:
+                    f.write('hdd=' + self.hdd + '\n')
+
+                if len(self.sda) > 0:
+                    f.write('sda=' + self.sda + '\n')
+                if len(self.sdb) > 0:
+                    f.write('sdb=' + self.sdb + '\n')
+                if len(self.sdc) > 0:
+                    f.write('sdc=' + self.sdc + '\n')
+                if len(self.sdd) > 0:
+                    f.write('sdd=' + self.sdd + '\n')
+                if len(self.sdi) > 0:
+                    f.write('sdi=' + self.sdi + '\n')
+
+                self.curses = self.ui.curses.isChecked()
+                if self.curses:
+                    f.write('curses\n')
+
+                for nicNum in range(self.minNICID, self.maxNICID + 1, 1):
+                    if (len(self.macs[nicNum]) > 0) or (len(self.nics[nicNum]) > 0) or (len(self.vlans[nicNum]) > 0):
+                        f.write('mac' + str(nicNum) + '=' + self.macs[nicNum] + '\n')
+                        f.write('nic' + str(nicNum) + '=' + self.nics[nicNum] + '\n')
+                        f.write('vlan' + str(nicNum) + '=' + self.vlans[nicNum] + '\n')
+
+                f.close()
+
+            if os.path.exists(self.fnm):
+                self.ui.btnSave.setEnabled(False)
+            else:
+                QMessageBox.critical(self, 'Error saving VM', "Failed to save VM configuration file: " + self.fnm, QMessageBox.Ok)
+                return
+
+            self.ui.vmFileName.setFocus(True)
+
+        if DBG > 1:
+            print('<<<<<<<<<<<<<<<< Finished saving VM settings')
+        return
       
     def FDDChanged(self, newFDD):
         """The slot for the FDD combobox box currentIndexChanged signal"""
@@ -693,6 +806,68 @@ class VMDialog(QDialog):
         if selfsig:
             self.NICChanged(inic)
 
+        self.enableSaveButton(False)
+
+    def enableSaveButton(self, btnOn):
+        self.SaveOn = btnOn
+        self.ui.btnSave.setEnabled(btnOn)
+
+    def filenameChanged(self, text):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def VMNameChanged(self, text):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def UUIDChanged(self, text):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def cdromChanged(self, text):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def cpusChanged(self, i):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def CPUModelChanged(self, i):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def memSizeChanged(self, i):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def VGAModelChanged(self, i):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def SoundCardChanged(self, i):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def ClockToggled(self, checked):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def USBChanged(self, i):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def ACPIChanged(self, i):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def HPETChanged(self, i):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
+    def VLANChanged(self, text):
+        if not self.saveOn:
+            self.enableSaveButton(True)
+
     def generateUUID(self, generateUUID):
         random.seed()
         a = random.randrange(0, 2147483647)
@@ -912,6 +1087,27 @@ class VMDialog(QDialog):
         if DBG > 0:
             print("Completed re-click event for button " + str(self.storageReclicker.btnSource))
 
+    def getQEMUMachine(self):
+        theMachine = self.ui.machine.currentText()
+        if theMachine == 'PC 1.0':
+            theMachine = 'pc-1.0'
+        elif theMachine == 'PC 0.14':
+            theMachine = 'pc-0.14'
+        elif theMachine == 'PC 0.13':
+            theMachine = 'pc-0.13'
+        elif theMachine == 'PC 0.12':
+            theMachine = 'pc-0.12'
+        elif theMachine == 'PC 0.11':
+            theMachine = 'pc-0.11'
+        elif theMachine == 'PC 0.10':
+            theMachine = 'pc-0.10'
+        elif theMachine == 'ISA PC':
+            theMachine = 'isapc'
+        else:
+            theMachine = 'pc-1.0'
+
+        return theMachine
+
     # PC Model list
     def initMachineList(self):
         self.ui.machine.addItem('PC 1.0')
@@ -922,6 +1118,12 @@ class VMDialog(QDialog):
         self.ui.machine.addItem('PC 0.10')
         self.ui.machine.addItem('ISA PC')
 
+    def getQEMUVGA(self):
+        theVGA = self.ui.vgaModel.currentText()
+        theVGA = theVGA.decode('utf-8').lower()
+
+        return theVGA
+
     # VGA controller list
     def initVGAList(self):
         self.ui.vgaModel.addItem('Standard')
@@ -930,6 +1132,33 @@ class VMDialog(QDialog):
         self.ui.vgaModel.addItem('QXL')
         self.ui.vgaModel.addItem('XenFB')
         self.ui.vgaModel.addItem('None')
+
+    def getQEMUCPUModel(self):
+        theCPU = self.ui.cpuModel.currentText()
+        if theCPU == 'Opteron G1':
+            theCPU = 'Opteron_G1'
+        elif theCPU == 'Opteron G2':
+            theCPU = 'Opteron_G2'
+        elif theCPU == 'Opteron G3':
+            theCPU = 'Opteron_G3'
+        elif theCPU == 'Athlon':
+            theCPU = 'athlon'
+        elif theCPU == 'Pentium':
+            theCPU = 'pentium'
+        elif theCPU == 'Pentium 2':
+            theCPU = 'pentium2'
+        elif theCPU == 'Pentium 3':
+            theCPU = 'pentium3'
+        elif theCPU == 'Core Duo':
+            theCPU = 'coreduo'
+        elif theCPU == 'Core2 Duo':
+            theCPU = 'core2duo'
+        elif theCPU == 'PC 0.10':
+            theCPU = 'pc-0.10'
+        elif theCPU == '':
+            theCPU = 'host'
+
+        return theCPU
 
     # CPU model list
     def initCPUModelList(self):
@@ -953,6 +1182,23 @@ class VMDialog(QDialog):
         self.ui.cpuModel.addItem('qemu64')
         self.ui.cpuModel.addItem('Core2 Duo')
         self.ui.cpuModel.addItem('phenom')
+
+    def getQEMUSound(self):
+        theSound = self.ui.soundCard.currentText()
+        if theSound == 'PC Speaker':
+            theSound = 'pcspk'
+        elif theSound == 'Soundblaster 16':
+            theSound = 'sb16'
+        elif theSound == 'Intel AC97':
+            theSound = 'ac97'
+        elif theSound == 'Ensoniq ES1370':
+            theSound = 'es1370'
+        elif theSound == 'Intel HDA':
+            theSound = 'hda'
+        else:
+            theSound = self.defaultSound
+
+        return theSound
 
     # Sound card list
     def initSoundCardList(self):
@@ -1026,14 +1272,35 @@ class VMDialog(QDialog):
         self.ui.btnIDEDisk.clicked.connect(self.PickIDE)
         self.ui.btnSCSIDisk.clicked.connect(self.PickSCSI)
         self.ui.vmList.currentTextChanged.connect(self.VMChanged)
+        
+        # These cause the Save button to come on if something changes but not
+        # if an entry is loaded from the VM list (is in a saved state)
         self.ui.fdd.currentIndexChanged.connect(self.FDDChanged)
         self.ui.ide.currentIndexChanged.connect(self.IDEChanged)
         self.ui.scsi.currentIndexChanged.connect(self.SCSIChanged)
         self.ui.nic.currentIndexChanged.connect(self.NICChanged)
+        self.ui.vmFileName.textChanged.connect(self.filenameChanged)
+        self.ui.vmName.textChanged.connect(self.VMNameChanged)
+        self.ui.uuid.textChanged.connect(self.UUIDChanged)
+        self.ui.cdromPath.textChanged.connect(self.cdromChanged)
+        self.ui.cpuCount.valueChanged.connect(self.cpusChanged)
+        self.ui.cpuModel.currentIndexChanged.connect(self.CPUModelChanged)
+        self.ui.memMB.valueChanged.connect(self.memSizeChanged)
+        self.ui.vgaModel.currentIndexChanged.connect(self.VGAModelChanged)
+        self.ui.soundCard.currentIndexChanged.connect(self.SoundCardChanged)
+        self.ui.utcClock.toggled.connect(self.ClockToggled)
+        self.ui.localClock.toggled.connect(self.ClockToggled)
+        self.ui.usb.stateChanged.connect(self.USBChanged)
+        self.ui.acpi.stateChanged.connect(self.ACPIChanged)
+        self.ui.hpet.stateChanged.connect(self.HPETChanged)
+        self.ui.vlan.textChanged.connect(self.VLANChanged)
+        self.ui.btnSave.clicked.connect(self.saveClicked)
 
         # Create a signal for the asynchronous re-click from storage button context menu
         self.storageReclicker = storageContextMenuEvents()
         self.storageReclicker.sigReclick.connect(self.reClickStorageBtn, QtCore.Qt.QueuedConnection)
+
+        self.enableSaveButton(self.saveOn)
 
         # Fit content and make fixed size
         self.setFixedWidth(self.calcMinWidth())
